@@ -1,0 +1,1780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Black Beiger ERP</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap');
+  :root{
+    --bb-black:#14293F; --bb-black-soft:#1D3A57; --bb-brass:#2E6FE0; --bb-sage:#3F7250; --bb-rust:#C0392B;
+    --bb-line:#CBD8E8; --bb-bg:#F2F6FC; --bb-ink:#16233A; --bb-ink-muted:#5B6B85; --bb-ink-faint:#94A6C2; --bb-surface:#FFFFFF;
+    --bb-teal:#0D9488; --bb-purple:#7C3AED; --bb-amber:#B45309;
+    --shadow: 0 1px 2px rgba(16,20,30,0.05), 0 1px 10px rgba(16,20,30,0.06);
+    --radius: 10px;
+    font-family:'Inter',-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bb-bg); color:var(--bb-ink); font-size:14.5px; overflow-x:hidden;}
+  .table-scroll{overflow-x:auto; -webkit-overflow-scrolling:touch; margin-bottom:10px;}
+  .table-scroll table{margin-bottom:0; min-width:520px;}
+  .mono{font-family:'IBM Plex Mono', ui-monospace, monospace; font-variant-numeric:tabular-nums;}
+
+  /* ---- login screen ---- */
+  .login-wrap{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px;}
+  .card{background:#fff; border:1px solid var(--bb-line); border-radius:12px; padding:32px 28px; width:100%; max-width:360px; box-shadow:var(--shadow);}
+  .brand-solo{font-family:Georgia,serif; font-size:19px; text-align:center; margin-bottom:24px;}
+  .brand-solo span{color:var(--bb-brass);}
+  label{display:block; font-size:10.5px; font-weight:700; color:var(--bb-ink-muted); margin-bottom:4px; text-transform:uppercase; letter-spacing:0.04em;}
+  input,select{width:100%; padding:10px 11px; border:1.5px solid var(--bb-line); border-radius:8px; font-size:16px; margin-bottom:14px; font-family:inherit; background:#fff;}
+  .btn{padding:11px 16px; border-radius:9px; border:none; font-size:13px; font-weight:700; min-height:44px; cursor:pointer;}
+  .btn-block{display:block; width:100%; text-align:center;}
+  .btn-primary{background:var(--bb-black); color:#F3EEE2;}
+  .btn-secondary{background:transparent; border:1.5px solid var(--bb-black); color:var(--bb-black);}
+  .btn:disabled{opacity:0.6; cursor:default;}
+  .error{background:#FCF3F1; border-left:3px solid var(--bb-rust); color:var(--bb-rust); font-size:12.5px; padding:10px 12px; border-radius:7px; margin-bottom:14px; display:none;}
+  .error.show{display:block;}
+
+  /* ---- app shell ---- */
+  .app-shell{display:flex; align-items:flex-start; min-height:100vh;}
+  .sidebar{width:210px; flex-shrink:0; background:var(--bb-black); min-height:100vh; padding:18px 0; position:sticky; top:0; display:flex; flex-direction:column; justify-content:space-between;}
+  .sidebar-brand{color:#F3EEE2; font-family:Georgia,serif; font-size:15px; padding:0 18px 16px;}
+  .sidebar-brand span{color:var(--bb-brass);}
+  .sidebar-group{margin-bottom:12px;}
+  .sidebar-group-label{color:#7A7365; font-size:9.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.07em; padding:0 18px 5px;}
+  .sidebar-link{display:block; color:#C9BFA6; text-decoration:none; font-size:13px; padding:8px 18px; border-left:2px solid transparent; cursor:pointer;}
+  .sidebar-link:hover{color:#fff; background:rgba(255,255,255,0.04);}
+  .sidebar-link.active{color:#fff; background:rgba(176,141,87,0.14); border-left:2px solid var(--bb-brass); font-weight:600;}
+  .sidebar-foot{padding:14px 18px; border-top:1px solid rgba(255,255,255,0.08);}
+  .sidebar-foot .who{color:#F3EEE2; font-size:12.5px; font-weight:600;}
+  .sidebar-foot .role{color:#9A917C; font-size:10.5px; text-transform:uppercase; margin-bottom:8px;}
+  .sidebar-foot button{width:100%; border:1px solid rgba(255,255,255,0.15); background:transparent; color:#C9BFA6; border-radius:7px; padding:6px; font-size:11.5px; cursor:pointer;}
+  .main-content{flex:1; min-width:0;}
+  .wrap{max-width:1000px; margin:0 auto; padding:20px 22px 60px;}
+  .panel{display:none;}
+  .panel.active{display:block;}
+
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  .mobile-topbar{display:none; align-items:center; gap:12px; padding:12px 16px; background:var(--bb-black); position:sticky; top:0; z-index:120;}
+  .hamburger-btn{background:transparent; border:1px solid rgba(255,255,255,0.2); color:#F3EEE2; border-radius:7px; width:38px; height:38px; font-size:17px; cursor:pointer; flex-shrink:0;}
+  .mobile-topbar-brand{color:#F3EEE2; font-family:Georgia,serif; font-size:15px;}
+  .mobile-topbar-brand span{color:var(--bb-brass);}
+  .sidebar-backdrop{display:none;}
+  .card2{background:var(--bb-surface); border:1px solid var(--bb-line); border-radius:var(--radius); padding:17px; margin-bottom:14px; box-shadow:var(--shadow);}
+  .card2 h3{margin:0 0 12px; font-family:Georgia,serif; font-size:16px;}
+  .card2 h4{margin:14px 0 8px; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--bb-ink-muted); font-weight:700;}
+  .subtabs{display:flex; gap:6px; margin-bottom:14px;}
+  .subtab{border:1px solid var(--bb-line); background:#fff; color:var(--bb-ink-muted); font-size:11.5px; font-weight:700; padding:9px 14px; border-radius:8px; cursor:pointer; text-transform:uppercase; letter-spacing:0.03em;}
+  .subtab.active{background:var(--bb-black); color:#F3EEE2; border-color:var(--bb-black);}
+  table{width:100%; border-collapse:collapse; margin-bottom:10px; background:#fff; border-radius:9px; overflow:hidden;}
+  th{font-size:9.5px; text-transform:uppercase; color:var(--bb-ink-muted); text-align:left; padding:7px 8px; border-bottom:1px solid var(--bb-line); background:#FAFBFC;}
+  td{font-size:12.5px; padding:7px 8px; border-bottom:1px solid var(--bb-line); color:var(--bb-ink);}
+  tr:last-child td{border-bottom:none;}
+  .badge{font-size:10px; font-weight:700; padding:4px 9px; border-radius:999px;}
+  .badge.stock{background:#EAE2CC; color:var(--bb-black);}
+  .badge.materials{background:#F0E4D8; color:var(--bb-brass);}
+  .badge.open{background:#F5DFD6; color:var(--bb-rust);}
+  .badge.resolved{background:#E2E9DD; color:var(--bb-sage);}
+  .list-item{border:1px solid var(--bb-line); border-radius:10px; padding:12px 14px; margin-bottom:9px;}
+  .list-item .top{display:flex; justify-content:space-between; align-items:center;}
+  .list-item .meta{font-size:11.5px; color:var(--bb-ink-muted); margin-top:3px;}
+  .variance{font-weight:700; font-family:'IBM Plex Mono', monospace;}
+  .variance.zero{color:var(--bb-sage);}
+  .variance.nonzero{color:var(--bb-rust);}
+  .stat-row{display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap;}
+  .stat{flex:1; min-width:110px; background:#fff; border-radius:var(--radius); padding:13px; box-shadow:var(--shadow); border-left:3px solid var(--bb-ink-faint);}
+  .stat.accent{border-left-color:var(--bb-brass);}
+  .stat.warn{border-left-color:var(--bb-rust);}
+  .stat .n{font-family:'IBM Plex Mono', monospace; font-size:22px; font-weight:600;}
+  .stat .l{font-size:10px; color:var(--bb-ink-muted); text-transform:uppercase; letter-spacing:0.04em;}
+  .empty{color:var(--bb-ink-faint); font-size:12.5px; padding:8px 0;}
+  .ledger-summary{display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap;}
+  .ledger-summary .box{flex:1; min-width:110px; background:var(--bb-bg); border:1px solid var(--bb-line); border-left:3px solid var(--bb-brass); border-radius:9px; padding:10px 12px;}
+  .ledger-summary .box .v{font-family:'IBM Plex Mono', monospace; font-size:17px; font-weight:600;}
+  .ledger-summary .box .k{font-size:10px; color:var(--bb-ink-muted); text-transform:uppercase;}
+  .filter-row{display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap;}
+  .fchip{border:1px solid var(--bb-line); background:#fff; border-radius:999px; padding:6px 12px; font-size:11px; font-weight:600; cursor:pointer;}
+  .fchip.active{background:var(--bb-black); color:#F3EEE2; border-color:var(--bb-black);}
+  .coming-soon{text-align:center; padding:60px 20px; color:var(--bb-ink-faint);}
+  .loading{text-align:center; padding:40px; color:var(--bb-ink-muted); font-size:13px;}
+  .sku-dropdown{position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid var(--bb-line); border-radius:8px; box-shadow:var(--shadow); z-index:50; max-height:170px; overflow-y:auto; margin-top:2px;}
+  .sku-suggestion{padding:9px 12px; font-size:13px; cursor:pointer;}
+  .sku-suggestion:hover{background:var(--bb-bg);}
+  .focused-header{display:none; align-items:center; justify-content:space-between; padding:14px 16px; background:var(--bb-black); position:sticky; top:0; z-index:100;}
+  .focused-signout{background:transparent; border:1px solid rgba(255,255,255,0.2); color:#C9BFA6; border-radius:7px; padding:7px 12px; font-size:11.5px; cursor:pointer;}
+  .modal-backdrop{display:none; position:fixed; inset:0; background:rgba(16,20,30,0.55); z-index:300; align-items:center; justify-content:center; padding:16px;}
+  .modal-backdrop.open{display:flex;}
+  .modal-box{background:#fff; border-radius:12px; max-width:420px; width:100%; max-height:82vh; overflow-y:auto; padding:20px;}
+  .modal-box h3{margin:0 0 12px; font-family:Georgia,serif; font-size:17px;}
+  .modal-actions{display:flex; gap:8px; margin-top:16px;}
+  .modal-total{font-family:'IBM Plex Mono', monospace; font-size:15px; font-weight:700; text-align:right; padding-top:8px; border-top:1px solid var(--bb-line); margin-top:6px;}
+  .icon-btn{background:#fff; border:1px solid var(--bb-line); border-radius:6px; padding:6px 9px; font-size:11.5px; line-height:1; cursor:pointer; color:var(--bb-ink-muted); flex-shrink:0; white-space:nowrap;}
+  .icon-btn-delete{background:#fff; border:1.5px solid var(--bb-rust); border-radius:8px; width:38px; height:38px; padding:0; display:flex; align-items:center; justify-content:center; font-size:15px; cursor:pointer; color:var(--bb-rust); flex-shrink:0; font-weight:700; box-sizing:border-box;}
+  .icon-btn-delete:hover{background:#FCF1EF;}
+  .card2.accent-log{border-top:3px solid var(--bb-brass);}
+  .card2.accent-detail{border-top:3px solid var(--bb-teal); background:#EEF3F7;}
+  .card2.accent-bulk{border-top:3px solid var(--bb-purple);}
+  .card2.accent-history{border-top:3px solid var(--bb-amber);}
+  .dyn-field-label{font-size:13px; text-transform:uppercase; color:var(--bb-ink); font-weight:700; margin-bottom:3px; letter-spacing:0.03em;}
+  .rr-code, .rr-qty{height:38px; box-sizing:border-box;}
+  .rr-code, .rr-qty{padding:6px 8px !important;}
+  .icon-btn:hover{background:var(--bb-bg);}
+  .app-shell.force-mobile:not(.focused){display:block !important;}
+  .app-shell.force-mobile:not(.focused) .mobile-topbar{display:flex !important;}
+  .app-shell.force-mobile:not(.focused) .sidebar{position:fixed !important; top:0 !important; left:0 !important; height:100vh !important; width:82% !important; max-width:300px !important; transform:translateX(-100%) !important; transition:transform 0.22s ease; z-index:200 !important; overflow-y:auto !important;}
+  .app-shell.force-mobile:not(.focused) .sidebar.open{transform:translateX(0) !important;}
+  .app-shell.force-mobile:not(.focused) .sidebar-backdrop.open{display:block !important; position:fixed !important; inset:0 !important; background:rgba(0,0,0,0.45) !important; z-index:150 !important;}
+  .app-shell.force-mobile:not(.focused) .wrap{padding:14px 12px 50px !important;}
+  .app-shell.force-mobile:not(.focused) .grid2{grid-template-columns:1fr !important;}
+  .app-shell.focused{display:block !important;}
+  .app-shell.focused .sidebar, .app-shell.focused .mobile-topbar, .app-shell.focused .sidebar-backdrop{display:none !important;}
+  .app-shell.focused .focused-header{display:flex !important;}
+  .app-shell.focused .grid2{grid-template-columns:1fr !important;}
+  .app-shell.focused .wrap{max-width:600px; padding:14px 12px 50px !important;}
+  .app-shell.focused .card2{padding:13px !important;}
+  .app-shell.focused input, .app-shell.focused select{margin-bottom:10px !important;}
+  .app-shell.focused label{margin-bottom:3px !important;}
+  .app-shell.focused .card2 h4{margin:10px 0 6px !important;}
+  .app-shell.focused th, .app-shell.focused td{padding:5px 6px !important; font-size:11.5px !important;}
+  .app-shell.focused .table-scroll table{min-width:0 !important;}
+  .app-shell.focused .icon-btn{padding:4px 7px !important; font-size:10.5px !important;}
+  .app-shell.focused .btn-sm{padding:8px 12px !important; font-size:12px !important;}
+  .app-shell.focused .badge{font-size:9px !important; padding:3px 7px !important;}
+  @media(max-width:820px){
+    .grid2{grid-template-columns:1fr;}
+    .app-shell{display:block;}
+    .mobile-topbar{display:flex;}
+    .sidebar{position:fixed; top:0; left:0; height:100vh; width:82%; max-width:300px; transform:translateX(-100%); transition:transform 0.22s ease; z-index:200; overflow-y:auto;}
+    .sidebar.open{transform:translateX(0);}
+    .sidebar-backdrop.open{display:block; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:150;}
+    .wrap{padding:14px 12px 50px;}
+    .card2{padding:13px;}
+    input,select{margin-bottom:10px;}
+    label{margin-bottom:3px;}
+    .card2 h4{margin:10px 0 6px;}
+  }
+</style>
+</head>
+<body>
+
+<div class="login-wrap" id="loginWrap">
+  <div class="card">
+    <div class="brand-solo">Black Beiger <span>ERP</span></div>
+    <div id="loginView">
+      <div class="error" id="loginError"></div>
+      <label>Email</label>
+      <input type="email" id="email" autocomplete="username">
+      <label>Password</label>
+      <input type="password" id="password" autocomplete="current-password">
+      <button class="btn btn-primary btn-block" id="signInBtn" onclick="doSignIn()">Sign In</button>
+    </div>
+  </div>
+</div>
+
+<div class="app-shell" id="appShell" style="display:none;">
+  <div class="focused-header" id="focusedHeader">
+    <div class="mobile-topbar-brand">Black Beiger <span>ERP</span></div>
+    <button class="focused-signout" onclick="doSignOut()">Sign Out</button>
+  </div>
+  <div class="mobile-topbar" id="mobileTopbar">
+    <button class="hamburger-btn" onclick="toggleSidebar()">☰</button>
+    <div class="mobile-topbar-brand">Black Beiger <span>ERP</span></div>
+  </div>
+  <div class="sidebar-backdrop" id="sidebarBackdrop" onclick="closeSidebar()"></div>
+  <aside class="sidebar" id="sidebarEl">
+    <div>
+      <div class="sidebar-brand">Black Beiger <span>ERP</span></div>
+      <div id="sidebarNav"></div>
+    </div>
+    <div class="sidebar-foot">
+      <div class="who" id="footWho"></div>
+      <div class="role" id="footRole"></div>
+      <button onclick="doSignOut()">Sign Out</button>
+    </div>
+  </aside>
+  <div class="main-content">
+    <div class="wrap">
+      <div class="panel" id="panel-boy"></div>
+      <div class="panel" id="panel-approver"></div>
+      <div class="panel active" id="panel-owner"></div>
+      <div class="panel" id="panel-discrepancies"></div>
+      <div class="panel" id="panel-ledger"></div>
+      <div class="panel" id="panel-team"></div>
+      <div class="panel" id="panel-exports"></div>
+      <div class="panel" id="panel-admin"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const SUPABASE_URL = 'https://pxshmlzcuboucsqjmwbe.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB4c2htbHpjdWJvdWNzcWptd2JlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4MTk5NTcsImV4cCI6MjEwMzM5NTk1N30.EaeHaJikEDfeFQlbQArn8m_XrIQ6iS2z9kSITavI4bs';
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  let me = null;          // { id, full_name, role } from app_users
+  let modalConfirmCallback = null;
+  function showConfirmModal(title, bodyHtml, onConfirm, confirmLabel){
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalBody').innerHTML = bodyHtml;
+    document.getElementById('modalConfirmBtn').textContent = confirmLabel || 'Confirm & Submit';
+    modalConfirmCallback = onConfirm;
+    document.getElementById('modalBackdrop').classList.add('open');
+  }
+  function closeModal(){
+    document.getElementById('modalBackdrop').classList.remove('open');
+    modalConfirmCallback = null;
+  }
+  function confirmModal(){
+    const cb = modalConfirmCallback;
+    closeModal();
+    if(cb) cb();
+  }
+  let writeInFlight = false;
+  let boySub = 'log';
+  let receivingRowCount = 0;
+  let selectedDetailGrn = null;
+  let localCountedLines = [];   // built up locally, written to DB only on Submit
+  let currentGrnReceivedQty = {};   // {base_item_code: quantity} for the GRN currently open in Add Details
+  let selectedApprovalGrn = null;
+  let refData = { vendors: [], materials: [], users: [] };
+  let activeTab = 'owner';
+  let ledgerView = 'material';
+  let discFilter = 'all';
+
+  // ---------- LOGIN ----------
+  function showError(msg){
+    const el = document.getElementById('loginError');
+    el.textContent = msg;
+    el.classList.add('show');
+  }
+  function clearError(){ document.getElementById('loginError').classList.remove('show'); }
+
+  async function doSignIn(){
+    clearError();
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    if(!email || !password){ showError('Enter both email and password.'); return; }
+    const btn = document.getElementById('signInBtn');
+    btn.disabled = true; btn.textContent = 'Signing in...';
+
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){
+      showError(error.message === 'Invalid login credentials' ? 'Wrong email or password.' : 'Sign in failed: ' + error.message);
+      btn.disabled = false; btn.textContent = 'Sign In';
+      return;
+    }
+    await enterApp(data.user.id);
+  }
+
+  async function doSignOut(){
+    await sb.auth.signOut();
+    me = null;
+    const shell = document.getElementById('appShell');
+    shell.classList.remove('focused', 'force-mobile');
+    shell.style.display = 'none';
+    document.getElementById('loginWrap').style.display = 'flex';
+    document.getElementById('email').value = '';
+    document.getElementById('password').value = '';
+    const btn = document.getElementById('signInBtn');
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+
+  // ---------- ROLE-BASED ACCESS ----------
+  // Mirrors the database's actual RLS rules — this is a UX convenience
+  // (clean "not authorized" message instead of a confusing empty
+  // query), not the real security boundary. The real boundary is the
+  // RLS policies (migration 12), which block this data even if
+  // someone bypasses the UI entirely via the browser console.
+  const READY_TABS = ['boy','approver','owner','discrepancies','ledger','admin','exports'];
+  const ROLE_TABS = {
+    warehouse_boy: ['boy'],
+    approver: ['approver'],
+    owner: ['boy','approver','owner','discrepancies','ledger','team','exports','admin'],
+    admin: ['boy','approver','owner','discrepancies','ledger','team','exports','admin'],
+  };
+  function allowedTabs(){ return (me && ROLE_TABS[me.role]) || []; }
+
+  async function enterApp(authId){
+    const { data: profile, error } = await sb.from('app_users').select('id, full_name, role').eq('auth_id', authId).maybeSingle();
+    if(error){ showError('Signed in, but could not load your profile: ' + error.message); resetLoginBtn(); return; }
+    if(!profile){ showError('Your login works, but no profile is set up for you yet — ask the admin to add you.'); await sb.auth.signOut(); resetLoginBtn(); return; }
+
+    me = profile;
+    document.getElementById('loginWrap').style.display = 'none';
+    document.getElementById('appShell').style.display = 'flex';
+    document.getElementById('footWho').textContent = me.full_name;
+    document.getElementById('footRole').textContent = me.role.replace('_',' ');
+    const isFocusedRole = me.role === 'warehouse_boy' || me.role === 'approver';
+    document.getElementById('appShell').classList.toggle('focused', isFocusedRole);
+    applyMobileLayoutClass();
+
+    await loadReferenceData();
+    const landing = allowedTabs()[0] || 'boy';
+    await switchTab(landing);
+  }
+  function resetLoginBtn(){
+    const btn = document.getElementById('signInBtn');
+    btn.disabled = false; btn.textContent = 'Sign In';
+  }
+
+  (async () => {
+    const { data } = await sb.auth.getSession();
+    if(data.session){ await enterApp(data.session.user.id); }
+  })();
+
+  // ---------- NAV ----------
+  const NAV_GROUPS = [
+    { label:'Receiving', items:[ {id:'boy', label:'Warehouse Boy'}, {id:'approver', label:'Approver'} ]},
+    { label:'Reporting', items:[ {id:'owner', label:'Owner Dashboard'}, {id:'discrepancies', label:'Discrepancies'}, {id:'ledger', label:'Ledger'}, {id:'team', label:'Team Activity'}, {id:'exports', label:'Exports'} ]},
+    { label:'Setup', items:[ {id:'admin', label:'Admin'} ]},
+  ];
+
+  function renderTabs(){
+    const allowed = allowedTabs();
+    document.getElementById('sidebarNav').innerHTML = NAV_GROUPS.map(g => {
+      const items = g.items.filter(t => allowed.includes(t.id));
+      if(items.length === 0) return '';
+      return `
+        <div class="sidebar-group">
+          <div class="sidebar-group-label">${g.label}</div>
+          ${items.map(t => `<a class="sidebar-link ${activeTab===t.id?'active':''}" onclick="switchTab('${t.id}')">${t.label}${READY_TABS.includes(t.id)?'':' 🔜'}</a>`).join('')}
+        </div>
+      `;
+    }).join('');
+  }
+
+  function toggleSidebar(){
+    const isOpen = document.getElementById('sidebarEl').classList.toggle('open');
+    document.getElementById('sidebarBackdrop').classList.toggle('open', isOpen);
+  }
+  function closeSidebar(){
+    document.getElementById('sidebarEl').classList.remove('open');
+    document.getElementById('sidebarBackdrop').classList.remove('open');
+  }
+
+  // The CSS @media(max-width:820px) query doesn't reliably switch on some
+  // real devices — confirmed by testing, not assumed. This JS check is a
+  // second, independent mechanism for the Owner/Admin sidebar specifically,
+  // paired with !important CSS rules so it wins regardless of whether the
+  // media query itself is behaving correctly on a given phone/browser.
+  function applyMobileLayoutClass(){
+    const shell = document.getElementById('appShell');
+    if(!shell || !me) return;
+    const w = Math.min(window.innerWidth || 9999, document.documentElement.clientWidth || 9999, screen.width || 9999);
+    shell.classList.toggle('force-mobile', w <= 820);
+  }
+  window.addEventListener('resize', applyMobileLayoutClass);
+
+  async function switchTab(id){
+    closeSidebar();
+    if(!allowedTabs().includes(id)){
+      activeTab = id;
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      const el = document.getElementById('panel-'+id);
+      el.classList.add('active');
+      el.innerHTML = '<div class="card2"><div class="empty">You do not have access to this screen.</div></div>';
+      renderTabs();
+      return;
+    }
+    activeTab = id;
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-'+id).classList.add('active');
+    renderTabs();
+    if(id === 'owner') await renderOwner();
+    else if(id === 'ledger') await renderLedger();
+    else if(id === 'discrepancies') await renderDiscrepancies();
+    else if(id === 'boy') await renderBoy();
+    else if(id === 'approver') await renderApprover();
+    else if(id === 'admin') await renderAdmin();
+    else if(id === 'exports') await renderExports();
+    else renderComingSoon(id);
+    window.scrollTo({top:0, behavior:'instant'});
+  }
+
+  function renderComingSoon(id){
+    document.getElementById('panel-'+id).innerHTML = `
+      <div class="card2"><div class="coming-soon">This screen connects to the real database in the next step.<br>Reporting screens (Owner, Ledger, Discrepancies) are wired up first.</div></div>
+    `;
+  }
+
+  // ---------- REFERENCE DATA ----------
+  async function loadReferenceData(){
+    const [{ data: vendors, error: e1 }, { data: materials, error: e2 }, { data: users, error: e3 }] = await Promise.all([
+      sb.from('vendors').select('*'),
+      sb.from('materials').select('*'),
+      sb.from('app_users').select('*'),
+    ]);
+    if(e1 || e2 || e3){ console.error('reference data load failed', e1, e2, e3); }
+    refData.vendors = vendors || [];
+    refData.materials = materials || [];
+    refData.users = users || [];
+  }
+  function vendorName(id){ const v = refData.vendors.find(x => x.id === id); return v ? v.name : '—'; }
+  function userName(id){ const u = refData.users.find(x => x.id === id); return u ? u.full_name : '—'; }
+  function materialName(id){ const m = refData.materials.find(x => x.id === id); return m ? m.name : '—'; }
+  function fmtDate(iso){
+    if(!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'}) + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+  }
+
+  // ---------- OWNER DASHBOARD ----------
+  async function renderOwner(){
+    const el = document.getElementById('panel-owner');
+    el.innerHTML = '<div class="loading">Loading…</div>';
+
+    const [{ data: posted, error: e1 }, { count: pendingCount, error: e2 }, { data: flags, error: e3 }, { data: intake, error: e4 }] = await Promise.all([
+      sb.from('grn').select('*').eq('status','posted').order('posted_at', { ascending:false }),
+      sb.from('grn').select('*', { count:'exact', head:true }).eq('status','submitted'),
+      sb.from('variance_flags').select('grn_id, status'),
+      sb.from('grn').select('created_at').eq('status','intake'),
+    ]);
+    if(e1 || e2 || e3 || e4){ el.innerHTML = `<div class="card2"><div class="empty">Could not load dashboard: ${(e1||e2||e3||e4).message}</div></div>`; return; }
+
+    const openFlagCount = (flags||[]).filter(f => f.status === 'open').length;
+    const intakeList = intake || [];
+    const overdueCount = intakeList.filter(g => (Date.now() - new Date(g.created_at)) / 3600000 >= 3).length;
+
+    el.innerHTML = `
+      <div class="stat-row">
+        <div class="stat accent"><div class="n mono">${(posted||[]).length}</div><div class="l">Posted</div></div>
+        <div class="stat"><div class="n mono">${pendingCount||0}</div><div class="l">In Approval</div></div>
+        <div class="stat warn" style="cursor:pointer;" onclick="switchTab('discrepancies')"><div class="n mono">${openFlagCount}</div><div class="l">Open Variance</div></div>
+        <div class="stat ${overdueCount ? 'warn' : ''}" style="cursor:pointer;" onclick="switchTab('boy')"><div class="n mono">${intakeList.length}</div><div class="l">Awaiting Details${overdueCount ? ' — '+overdueCount+' overdue' : ''}</div></div>
+      </div>
+      <div class="card2">
+        <h3>Posted Deliveries</h3>
+        ${(posted||[]).length===0 ? '<div class="empty">Nothing posted yet.</div>' : posted.map(g => {
+          const flagCount = (flags||[]).filter(f => f.grn_id === g.id).length;
+          return `
+            <div class="list-item">
+              <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${g.grn_type}">${g.grn_type}</span></div>
+              <div class="meta">${g.receiving_book_ref || 'no bill no'} · posted ${fmtDate(g.posted_at)} ${flagCount ? ' · '+flagCount+' variance flag(s)' : ' · clean'}${g.grn_type==='stock' ? (g.shopify_synced ? ' · synced to Shopify' : ' · not yet synced') : ''}</div>
+            </div>`;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  // ---------- LEDGER ----------
+  async function renderLedger(){
+    const el = document.getElementById('panel-ledger');
+    el.innerHTML = '<div class="loading">Loading…</div>';
+    const [{ data, error }, { data: flagsData }] = await Promise.all([
+      sb.from('ledger_entries').select('*').order('posted_at', { ascending:true }),
+      sb.from('variance_flags').select('*').order('flagged_at', { ascending:false })
+    ]);
+    if(error){ el.innerHTML = `<div class="card2"><div class="empty">Could not load ledger: ${error.message}</div></div>`; return; }
+    const rows = data || [];
+    const flags = flagsData || [];
+    el.innerHTML = `
+      <div class="card2">
+        <div class="subtabs">
+          <button class="subtab ${ledgerView==='material'?'active':''}" onclick="ledgerView='material'; renderLedger();">By Material</button>
+          <button class="subtab ${ledgerView==='vendor'?'active':''}" onclick="ledgerView='vendor'; renderLedger();">By Vendor</button>
+        </div>
+        <div id="ledgerBody"></div>
+      </div>
+    `;
+    document.getElementById('ledgerBody').innerHTML = ledgerView === 'material' ? renderLedgerByMaterial(rows, flags) : renderLedgerByVendor(rows);
+  }
+  function keyOf(row){ return row.base_item_code || materialName(row.material_id); }
+  function toggleLedgerFlagDetail(key){
+    const el = document.getElementById('flagdetail-' + key.replace(/[^a-zA-Z0-9]/g,''));
+    if(el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  }
+  function renderLedgerByMaterial(rows, flags){
+    const keys = Array.from(new Set(rows.map(keyOf)));
+    if(keys.length===0) return '<div class="empty">No ledger entries yet.</div>';
+    return keys.map(key => {
+      const rs = rows.filter(r => keyOf(r) === key);
+      const codeFlags = (flags||[]).filter(f => f.base_item_code === key);
+      let balance = 0, value = 0, missingCost = 0;
+      const trs = rs.map(r => {
+        balance += r.quantity_delta;
+        const hasCost = r.unit_cost !== null && r.unit_cost !== undefined;
+        if(hasCost) value += r.quantity_delta * r.unit_cost; else missingCost++;
+        return `<tr><td>${fmtDate(r.posted_at)}</td><td>${r.source_type}</td><td>${vendorName(r.vendor_id)}</td>
+          <td class="variance ${r.quantity_delta>=0?'zero':'nonzero'}">${r.quantity_delta>0?'+':''}${r.quantity_delta}</td>
+          <td>${hasCost ? r.unit_cost : '—'}</td><td>${hasCost ? (r.quantity_delta*r.unit_cost).toLocaleString() : '—'}</td><td>${balance}</td></tr>`;
+      }).join('');
+      const flagKeyId = key.replace(/[^a-zA-Z0-9]/g,'');
+      const flagIndicator = codeFlags.length ? `
+        <p style="color:var(--bb-rust); font-size:11.5px; font-weight:700; margin:6px 0; cursor:pointer;" onclick="toggleLedgerFlagDetail('${key}')">
+          ⚠ Difference in scanned on ${codeFlags.length} deliver${codeFlags.length>1?'ies':'y'} — tap to see
+        </p>
+        <div id="flagdetail-${flagKeyId}" style="display:none; margin-bottom:8px;">
+          ${codeFlags.map(f => `<div class="list-item" style="cursor:default; padding:8px 12px;">
+            <div class="top"><span>Book ${f.quantity_a} → Scanned ${f.quantity_b} (${f.variance>0?'+':''}${f.variance})</span><span class="badge ${f.status==='open'?'open':'resolved'}">${f.status}</span></div>
+            <div class="meta">reason: ${f.reason||'—'} · ${fmtDate(f.flagged_at)}</div>
+          </div>`).join('')}
+        </div>` : '';
+      return `<h4>${key}</h4>
+        <div class="ledger-summary">
+          <div class="box"><div class="v mono">${balance}</div><div class="k">Current Balance</div></div>
+          <div class="box"><div class="v mono">${value.toLocaleString()}</div><div class="k">Est. Value</div></div>
+          <div class="box"><div class="v mono">${missingCost}</div><div class="k">Missing Cost</div></div>
+        </div>
+        ${flagIndicator}
+        <div class="table-scroll"><table><tr><th>Date</th><th>Source</th><th>Vendor</th><th>Qty Δ</th><th>Unit Cost</th><th>Value Δ</th><th>Balance</th></tr>${trs}</table></div>`;
+    }).join('');
+  }
+  function renderLedgerByVendor(rows){
+
+    const vendorIds = Array.from(new Set(rows.map(r => r.vendor_id)));
+    if(vendorIds.length===0) return '<div class="empty">No ledger entries yet.</div>';
+    return vendorIds.map(vid => {
+      const rs = rows.filter(r => r.vendor_id === vid);
+      const totalQty = rs.reduce((s,r) => s+r.quantity_delta, 0);
+      const totalValue = rs.reduce((s,r) => s + (r.unit_cost ? r.quantity_delta*r.unit_cost : 0), 0);
+      const trs = rs.map(r => `<tr><td>${fmtDate(r.posted_at)}</td><td>${keyOf(r)}</td>
+          <td class="variance ${r.quantity_delta>=0?'zero':'nonzero'}">${r.quantity_delta>0?'+':''}${r.quantity_delta}</td>
+          <td>${r.unit_cost ?? '—'}</td><td>${r.unit_cost ? (r.quantity_delta*r.unit_cost).toLocaleString() : '—'}</td></tr>`).join('');
+      return `<h4>${vendorName(vid)}</h4>
+        <div class="ledger-summary">
+          <div class="box"><div class="v mono">${totalQty}</div><div class="k">Total Received</div></div>
+          <div class="box"><div class="v mono">${totalValue.toLocaleString()}</div><div class="k">Total Value</div></div>
+        </div>
+        <div class="table-scroll"><table><tr><th>Date</th><th>Item</th><th>Qty Δ</th><th>Unit Cost</th><th>Value Δ</th></tr>${trs}</table></div>`;
+    }).join('');
+  }
+
+  // ---------- BOY TAB ----------
+  function setBoySub(s){ boySub = s; renderBoy(); }
+
+  async function renderBoy(){
+    const el = document.getElementById('panel-boy');
+    const canBulk = me.role === 'owner' || me.role === 'admin';
+    el.innerHTML = `
+      <div class="subtabs">
+        <button class="subtab ${boySub==='log'?'active':''}" onclick="setBoySub('log')">1. Log Delivery</button>
+        <button class="subtab ${boySub==='detail'?'active':''}" onclick="setBoySub('detail')">2. Add Details</button>
+        <button class="subtab ${boySub==='history'?'active':''}" onclick="setBoySub('history')">History</button>
+        ${canBulk ? `<button class="subtab ${boySub==='bulk'?'active':''}" onclick="setBoySub('bulk')">Bulk Finalize</button>` : ''}
+      </div>
+      <div class="grid2">
+        <div id="boyFormArea"><div class="loading">Loading…</div></div>
+        <div class="card2"><h3>Waiting on details</h3><div id="pendingList"><div class="loading">Loading…</div></div></div>
+      </div>
+    `;
+    if(boySub === 'log') renderLogDeliveryForm();
+    else if(boySub === 'bulk' && canBulk) await renderBulkFinalizeForm();
+    else if(boySub === 'history') await renderHistoryForm();
+    else await renderAddDetailsForm();
+    await renderPendingList();
+  }
+
+  function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+  // ---------- BULK FINALIZE (owner/admin rescue tool for mixed-stock rush days) ----------
+  let bulkGrns = [];
+  let bulkAllocationResult = null;
+
+  async function renderBulkFinalizeForm(){
+    const area = document.getElementById('boyFormArea');
+    area.innerHTML = '<div class="card2"><div class="loading">Loading…</div></div>';
+    const { data: pending, error } = await sb.from('grn').select('*').eq('status','intake').eq('grn_type','stock').order('created_at', { ascending:true });
+    if(error){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
+    if(!pending || pending.length === 0){ area.innerHTML = '<div class="card2 accent-bulk"><h3>BULK FINALIZE</h3><div class="empty">Nothing waiting on details.</div></div>'; return; }
+
+    const grnIds = pending.map(g => g.id);
+    const { data: allLines } = await sb.from('grn_receiving_lines').select('grn_id, base_item_code, quantity').in('grn_id', grnIds);
+    bulkGrns = pending.map(g => {
+      const lines = (allLines||[]).filter(l => l.grn_id === g.id);
+      const receivingByCode = {};
+      lines.forEach(l => { receivingByCode[l.base_item_code] = (receivingByCode[l.base_item_code]||0) + Number(l.quantity); });
+      return { id: g.id, vendor_id: g.vendor_id, receiving_book_ref: g.receiving_book_ref, created_at: g.created_at, receivingByCode };
+    });
+    bulkAllocationResult = null;
+
+    area.innerHTML = `
+      <div class="card2 accent-bulk">
+        <h3>BULK FINALIZE</h3>
+        <p class="section-note">For a rush day where stock from several deliveries got physically mixed. Tick every delivery this count covers, upload one combined Excel (Code, Size, Qty), and review the split before confirming — each delivery still gets its own approval afterward, same as normal.</p>
+        <h4>Which deliveries does this count cover?</h4>
+        <div id="bulkGrnList">
+          ${bulkGrns.map(g => `
+            <label style="display:flex; align-items:flex-start; gap:8px; border:1px solid var(--bb-line); border-radius:9px; padding:10px 12px; margin-bottom:8px; text-transform:none; font-size:12.5px; cursor:pointer;">
+              <input type="checkbox" class="bulk-grn-check" value="${g.id}" style="width:auto; margin-bottom:0; margin-top:2px;">
+              <span>
+                <b>${vendorName(g.vendor_id)}</b> · ${g.receiving_book_ref || 'no bill no'}<br>
+                <span style="color:var(--bb-ink-muted);">${Object.entries(g.receivingByCode).map(([c,q]) => c+': '+q).join(', ')}</span>
+              </span>
+            </label>
+          `).join('')}
+        </div>
+        <h4>Combined Excel (Code, Size, Qty)</h4>
+        <input type="file" id="bulkExcelUpload" accept=".xlsx,.xls,.csv">
+        <button class="btn btn-primary btn-block" style="margin-top:10px;" onclick="runBulkAllocation()">Preview Split</button>
+        <div id="bulkPreviewArea" style="margin-top:14px;"></div>
+      </div>
+    `;
+  }
+
+  async function runBulkAllocation(){
+    const ticked = Array.from(document.querySelectorAll('.bulk-grn-check:checked')).map(el => el.value);
+    if(ticked.length === 0){ alert('Tick at least one delivery'); return; }
+    const fileInput = document.getElementById('bulkExcelUpload');
+    const file = fileInput.files[0];
+    if(!file){ alert('Upload the combined Excel file'); return; }
+
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(sheet, { header:1 });
+    const excelRows = [];
+    for(const row of raw){
+      const [codeRaw, sizeRaw, qtyRaw] = row;
+      if(!codeRaw || !sizeRaw || qtyRaw === undefined) continue;
+      const qty = Number(qtyRaw);
+      if(!qty || isNaN(qty)) continue;
+      excelRows.push({ code: String(codeRaw).trim().toUpperCase(), size: String(sizeRaw).trim(), qty });
+    }
+    if(excelRows.length === 0){ alert('No valid rows found in the file'); return; }
+
+    const ticketedGrns = bulkGrns.filter(g => ticked.includes(g.id));
+    bulkAllocationResult = allocateBulkExcel(ticketedGrns, excelRows);
+    renderBulkPreview(ticketedGrns);
+  }
+
+  // FIFO allocation: oldest ticked delivery's book quantity is filled first
+  // for each code. A shortfall against the combined book total shows up as
+  // a negative variance on the last delivery in the queue for that code; an
+  // excess shows up as a positive one — both land in the normal Discrepancy
+  // Register afterward, same mechanism as any other GRN.
+  function allocateBulkExcel(ticketedGrns, excelRows){
+    const pools = {};
+    ticketedGrns.forEach(g => {
+      Object.keys(g.receivingByCode).forEach(code => {
+        if(!pools[code]) pools[code] = [];
+        pools[code].push({ grn_id: g.id, remaining: g.receivingByCode[code] });
+      });
+    });
+    const allocations = [];
+    const unmatched = [];
+    excelRows.forEach(row => {
+      const pool = pools[row.code];
+      if(!pool || pool.length === 0){ unmatched.push(row); return; }
+      let remaining = row.qty;
+      while(remaining > 0 && pool.length > 0 && pool[0].remaining > 0){
+        const head = pool[0];
+        const take = Math.min(remaining, head.remaining);
+        allocations.push({ grn_id: head.grn_id, code: row.code, size: row.size, qty: take, isExcess: false });
+        head.remaining -= take;
+        remaining -= take;
+        if(head.remaining <= 0) pool.shift();
+      }
+      if(remaining > 0){
+        const lastGrnForCode = ticketedGrns.filter(g => row.code in g.receivingByCode).slice(-1)[0];
+        if(lastGrnForCode){
+          allocations.push({ grn_id: lastGrnForCode.id, code: row.code, size: row.size, qty: remaining, isExcess: true });
+        } else {
+          unmatched.push({ ...row, qty: remaining });
+        }
+      }
+    });
+    return { allocations, unmatched };
+  }
+
+  function renderBulkPreview(ticketedGrns){
+    const { allocations, unmatched } = bulkAllocationResult;
+    const totalsByGrnCode = {};
+    allocations.forEach(a => {
+      const key = a.grn_id + '|' + a.code;
+      totalsByGrnCode[key] = (totalsByGrnCode[key]||0) + a.qty;
+    });
+    const grnSections = ticketedGrns.map(g => {
+      const codes = Object.keys(g.receivingByCode);
+      const rows = codes.map(code => {
+        const book = g.receivingByCode[code];
+        const counted = totalsByGrnCode[g.id+'|'+code] || 0;
+        const diff = counted - book;
+        return `<tr><td>${code}</td><td>${book}</td><td>${counted}</td><td class="variance ${diff===0?'zero':'nonzero'}">${diff>0?'+':''}${diff}</td></tr>`;
+      }).join('');
+      return `<h4>${vendorName(g.vendor_id)} · ${g.receiving_book_ref||'no bill no'}</h4>
+        <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Allocated</th><th>Δ</th></tr>${rows}</table></div>`;
+    }).join('');
+    const unmatchedHtml = unmatched.length ? `
+      <p style="color:var(--bb-rust); font-weight:700; font-size:12px;">Not matched to any ticked delivery — check these codes, or tick more deliveries:</p>
+      <ul style="font-size:12.5px; color:var(--bb-rust);">${unmatched.map(u => `<li>${u.code}-${u.size} × ${u.qty}</li>`).join('')}</ul>
+    ` : '';
+    document.getElementById('bulkPreviewArea').innerHTML = `
+      <div class="card2" style="background:var(--bb-bg);">
+        <h3>Review before confirming</h3>
+        <p class="section-note">Any Δ here becomes a variance flag on that delivery, same as a normal single-delivery scan — nothing is written until you confirm below.</p>
+        ${grnSections}
+        ${unmatchedHtml}
+        <button class="btn btn-primary btn-block" id="bulkConfirmBtn" onclick="confirmBulkFinalize()">Confirm &amp; Submit All ${ticketedGrns.length} for Approval</button>
+      </div>
+    `;
+  }
+
+  async function confirmBulkFinalize(){
+    if(writeInFlight) return;
+    writeInFlight = true;
+    const btn = document.getElementById('bulkConfirmBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Submitting…'; }
+    try{
+      const { allocations } = bulkAllocationResult;
+      const variantCache = {};
+      for(const a of allocations){
+        const key = a.code+'-'+a.size;
+        if(!(key in variantCache)) variantCache[key] = await getOrCreateVariant(a.code, a.size);
+      }
+      const rows = allocations.map(a => ({
+        grn_id: a.grn_id, material_id: variantCache[a.code+'-'+a.size], counted_quantity: a.qty, entry_method: 'bulk_finalize', entered_by: me.id
+      }));
+      const { error: e1 } = await sb.from('grn_counted_lines').insert(rows);
+      if(e1){ alert('Could not save lines: ' + e1.message); return; }
+
+      const grnIds = Array.from(new Set(allocations.map(a => a.grn_id)));
+      const results = [];
+      for(const id of grnIds){
+        const { error: e2 } = await sb.rpc('submit_grn_details', { p_grn_id: id, p_submitter_id: me.id });
+        results.push({ id, ok: !e2, error: e2 ? e2.message : null });
+      }
+      const failed = results.filter(r => !r.ok);
+      if(failed.length){
+        alert('Lines saved, but ' + failed.length + ' deliver(y/ies) failed to submit: ' + failed.map(f=>f.error).join('; ') + ' — safe to try Bulk Finalize again for those.');
+      } else {
+        alert('All ' + grnIds.length + ' deliveries submitted for approval.');
+      }
+      bulkGrns = []; bulkAllocationResult = null;
+      boySub = 'log';
+      await renderBoy();
+    } finally {
+      writeInFlight = false;
+      if(btn){ btn.disabled = false; }
+    }
+  }
+
+  let pendingPhotoBlob = null;
+
+  function renderLogDeliveryForm(){
+    if(refData.vendors.length === 0){
+      document.getElementById('boyFormArea').innerHTML = `<div class="card2 accent-log"><h3>LOG DELIVERY</h3><div class="empty">No vendors set up yet — ask the admin to add one.</div></div>`;
+      return;
+    }
+    pendingPhotoBlob = null;
+    const vendorOpts = refData.vendors.map(v => `<option value="${v.id}">${v.name} (${v.category})</option>`).join('');
+    document.getElementById('boyFormArea').innerHTML = `
+      <div class="card2 accent-log">
+        <h3>LOG DELIVERY</h3>
+        <label>Vendor</label>
+        <select id="logVendor" onchange="onLogVendorChange()">${vendorOpts}</select>
+        <div style="display:flex; gap:8px;">
+          <div style="flex:1;"><label>Date</label><input type="date" id="logEntryDate" value="${todayStr()}"></div>
+          <div style="flex:1;"><label>Bill No.</label><input type="text" id="logBillNo" placeholder="e.g. 441"></div>
+        </div>
+        <div id="logDynamicFields"></div>
+        <label>Photo of the signed slip / Receiving Book page</label>
+        <input type="file" accept="image/*" capture="environment" id="logPhotoInput" onchange="handlePhotoSelect(this)">
+        <div id="photoHint" class="section-note" style="margin-top:-6px;"></div>
+        <img id="photoPreview" style="display:none; width:100%; max-height:180px; object-fit:cover; border-radius:8px; border:1px solid var(--bb-line); margin-bottom:10px;">
+        <button class="btn btn-primary btn-block" id="logDeliveryBtn" onclick="submitLogDelivery()">Log This Delivery</button>
+      </div>
+    `;
+    onLogVendorChange();
+  }
+
+  function onLogVendorChange(){
+    const vSel = document.getElementById('logVendor');
+    if(!vSel) return;
+    const vendor = refData.vendors.find(v => v.id === vSel.value);
+    const container = document.getElementById('logDynamicFields');
+    receivingRowCount = 0;
+    if(vendor && vendor.category === 'stock'){
+      container.innerHTML = `
+        <div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; margin-top:6px;">
+          <div style="width:150px; flex-shrink:0;"><div class="dyn-field-label" style="text-align:center;">SKU</div></div>
+          <div style="width:70px; flex-shrink:0;"><div class="dyn-field-label" style="text-align:center;">Qty</div></div>
+          <div style="width:34px; flex-shrink:0;"></div>
+        </div>
+        <div id="receivingRows" oninput="updateLogDeliveryTotal()"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="addReceivingRow()">+ Add another SKU</button>
+        <div class="modal-total" id="logDeliveryTotal" style="margin-top:8px;">Total: 0</div>`;
+      for(let i=0; i<4; i++) addReceivingRow();
+    } else {
+      container.innerHTML = '';
+    }
+    const hint = document.getElementById('photoHint');
+    if(hint && vendor){
+      hint.textContent = vendor.photo_required ? 'Required — ' + vendor.name + ' needs a photo.' : 'Optional — ' + vendor.name + ' usually doesn\u2019t need one.';
+      hint.style.color = vendor.photo_required ? 'var(--bb-rust)' : 'var(--bb-ink-muted)';
+    }
+  }
+
+  // Downscales to a reasonable max width and re-encodes as JPEG before
+  // upload — keeps uploads fast on a warehouse phone connection while
+  // staying legible enough to read handwritten quantities back later.
+  function handlePhotoSelect(input){
+    const file = input.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const maxW = 1600;
+        const scale = Math.min(1, maxW / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(blob => {
+          pendingPhotoBlob = blob;
+          const prev = document.getElementById('photoPreview');
+          prev.src = URL.createObjectURL(blob);
+          prev.style.display = 'block';
+        }, 'image/jpeg', 0.85);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function addReceivingRow(){
+    receivingRowCount++;
+    const id = 'rrow' + receivingRowCount;
+    const div = document.createElement('div');
+    div.className = 'dyn-row'; div.id = id;
+    div.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:5px;">
+        <div style="position:relative; width:150px; flex-shrink:0;">
+          <input type="text" inputmode="numeric" class="rr-code" style="margin-bottom:0; width:100%; text-align:center;"
+            oninput="skuInputHandler(this)" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
+          <div class="sku-dropdown" style="display:none;"></div>
+        </div>
+        <input type="number" inputmode="numeric" class="rr-qty" style="width:70px; flex-shrink:0; margin-bottom:0; text-align:center;">
+        <button type="button" class="icon-btn-delete" style="margin-left:24px;" onclick="removeReceivingRow('${id}')">✕</button>
+      </div>
+    `;
+    document.getElementById('receivingRows').appendChild(div);
+  }
+  function removeReceivingRow(id){
+    const row = document.getElementById(id);
+    if(!row) return;
+    const code = row.querySelector('.rr-code').value.trim();
+    const qty = row.querySelector('.rr-qty').value.trim();
+    if((code || qty) && !confirm('This row has something entered — remove it anyway?')) return;
+    row.remove();
+    updateLogDeliveryTotal();
+  }
+
+  // Real substring matching (not just prefix) — typing "279" or "27" both
+  // find "LS279", regardless of where the match falls in the code.
+  function skuInputHandler(inputEl){
+    const val = inputEl.value.trim().toLowerCase();
+    const dropdown = inputEl.parentElement.querySelector('.sku-dropdown');
+    const codes = Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)));
+    const matches = val ? codes.filter(c => c.toLowerCase().includes(val)) : codes;
+    if(matches.length === 0){ dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = matches.slice(0, 8).map(c => `<div class="sku-suggestion" onmousedown="selectSkuSuggestion(this)">${c}</div>`).join('');
+    dropdown.style.display = 'block';
+  }
+  function selectSkuSuggestion(el){
+    const dropdown = el.parentElement;
+    const input = dropdown.previousElementSibling;
+    input.value = el.textContent;
+    dropdown.style.display = 'none';
+    input.focus();
+  }
+  function hideSkuDropdown(inputEl){
+    const dropdown = inputEl.parentElement.querySelector('.sku-dropdown');
+    if(dropdown) dropdown.style.display = 'none';
+  }
+
+  function updateLogDeliveryTotal(){
+    let total = 0;
+    document.querySelectorAll('#receivingRows .rr-qty').forEach(inp => {
+      const v = Number(inp.value);
+      if(v > 0) total += v;
+    });
+    const el = document.getElementById('logDeliveryTotal');
+    if(el) el.textContent = 'Total: ' + total;
+  }
+
+  function submitLogDelivery(){
+    const vSel = document.getElementById('logVendor');
+    const vendor = refData.vendors.find(v => v.id === vSel.value);
+    if(!vendor){ alert('Select a vendor'); return; }
+    const billNo = document.getElementById('logBillNo').value.trim();
+    const entryDate = document.getElementById('logEntryDate').value || todayStr();
+
+    let receivingLines = [];
+    if(vendor.category === 'stock'){
+      document.querySelectorAll('#receivingRows .dyn-row').forEach(row => {
+        const code = row.querySelector('.rr-code').value.trim().toUpperCase();
+        const qty = Number(row.querySelector('.rr-qty').value);
+        if(code && qty > 0) receivingLines.push({ base_item_code: code, quantity: qty });
+      });
+      if(receivingLines.length === 0){ alert('Add at least one SKU + qty'); return; }
+
+      // Every code must already be known — a boy shouldn't be able to
+      // create a brand-new product line just by typing (or mistyping)
+      // something into this box. New codes go through Admin.
+      const knownCodes = new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code));
+      const unknownCodes = Array.from(new Set(receivingLines.map(l => l.base_item_code).filter(c => !knownCodes.has(c))));
+      if(unknownCodes.length){
+        alert('Not a known SKU — check for a typo, or ask an admin to add it first if it\'s genuinely new: ' + unknownCodes.join(', '));
+        return;
+      }
+    }
+    if(vendor.photo_required && !pendingPhotoBlob){ alert('A photo is required for ' + vendor.name); return; }
+
+    const grandTotal = receivingLines.reduce((s,l) => s + l.quantity, 0);
+    const rows = receivingLines.map(l => `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${l.base_item_code}</span><span class="mono">${l.quantity}</span></div></div>`).join('');
+    const body = `
+      <p style="font-size:12.5px; color:var(--bb-ink-muted); margin-top:0;">${vendor.name} · ${entryDate}${billNo ? ' · '+billNo : ''}</p>
+      ${rows || '<div class="empty">No stock lines (materials delivery).</div>'}
+      ${receivingLines.length ? `<div class="modal-total">Grand Total: ${grandTotal}</div>` : ''}
+    `;
+    showConfirmModal('Check before submitting', body, () => doSubmitLogDelivery(vendor, billNo, entryDate, receivingLines));
+  }
+
+  async function doSubmitLogDelivery(vendor, billNo, entryDate, receivingLines){
+    if(writeInFlight) return;
+    writeInFlight = true;
+    const btn = document.getElementById('logDeliveryBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Logging…'; }
+    try{
+      const clientSubmissionId = crypto.randomUUID();
+      let slipPhotoPath = null;
+      if(pendingPhotoBlob){
+        const path = clientSubmissionId + '/slip.jpg';
+        const { error: eUpload } = await sb.storage.from('receiving-slips').upload(path, pendingPhotoBlob, { contentType: 'image/jpeg' });
+        if(eUpload){ alert('Could not upload photo: ' + eUpload.message); return; }
+        slipPhotoPath = path;
+      }
+
+      const { data, error } = await sb.rpc('log_grn_delivery', {
+        p_client_submission_id: clientSubmissionId,
+        p_grn_type: vendor.category,
+        p_vendor_id: vendor.id,
+        p_receiving_book_ref: billNo,
+        p_created_by: me.id,
+        p_receiving_lines: receivingLines,
+        p_entry_date: entryDate,
+        p_slip_photo_path: slipPhotoPath
+      });
+
+      if(error){ alert('Could not log delivery: ' + error.message); return; }
+
+      boySub = 'detail';
+      selectedDetailGrn = data.grn_id;
+      await renderBoy();
+    } finally {
+      writeInFlight = false;
+      if(btn){ btn.disabled = false; btn.textContent = 'Log This Delivery'; }
+    }
+  }
+
+  // ---------- HISTORY ----------
+  let historyFilters = { fromDate:'', toDate:'', vendorId:'' };
+
+  async function renderHistoryForm(){
+    const area = document.getElementById('boyFormArea');
+    area.innerHTML = '<div class="card2 accent-history"><div class="loading">Loading…</div></div>';
+
+    let query = sb.from('grn').select('*').order('created_at', { ascending:false }).limit(100);
+    if(me.role === 'warehouse_boy') query = query.eq('created_by', me.id);
+    if(historyFilters.fromDate) query = query.gte('entry_date', historyFilters.fromDate);
+    if(historyFilters.toDate) query = query.lte('entry_date', historyFilters.toDate);
+    if(historyFilters.vendorId) query = query.eq('vendor_id', historyFilters.vendorId);
+
+    const { data, error } = await query;
+    if(error){ area.innerHTML = `<div class="card2 accent-history"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
+
+    const vendorOpts = refData.vendors.map(v => `<option value="${v.id}" ${historyFilters.vendorId===v.id?'selected':''}>${v.name}</option>`).join('');
+
+    area.innerHTML = `
+      <div class="card2 accent-history">
+        <h3>HISTORY</h3>
+        <p class="section-note">${me.role === 'warehouse_boy' ? 'Everything you have logged, searchable by date or vendor.' : 'Every delivery logged, searchable by date or vendor.'}</p>
+        <div style="display:flex; gap:8px;">
+          <div style="flex:1;"><label>From</label><input type="date" id="histFrom" value="${historyFilters.fromDate}" style="margin-bottom:8px;"></div>
+          <div style="flex:1;"><label>To</label><input type="date" id="histTo" value="${historyFilters.toDate}" style="margin-bottom:8px;"></div>
+        </div>
+        <label>Vendor</label>
+        <select id="histVendor"><option value="">All vendors</option>${vendorOpts}</select>
+        <button class="btn btn-secondary btn-sm" onclick="applyHistoryFilters()">Filter</button>
+        <h4 style="margin-top:14px;">Results (${(data||[]).length})</h4>
+        <div id="historyList">
+          ${(data||[]).length===0 ? '<div class="empty">No entries found for this filter.</div>' : data.map(g => `
+            <div class="list-item" style="cursor:pointer;" onclick="openHistoryDetail('${g.id}')">
+              <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${g.grn_type}">${g.grn_type}</span></div>
+              <div class="meta">${g.receiving_book_ref||'no bill no'} · ${fmtDate(g.entry_date || g.created_at)} · ${g.status}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div id="historyDetailArea" style="margin-top:14px;"></div>
+      </div>
+    `;
+  }
+
+  function applyHistoryFilters(){
+    historyFilters.fromDate = document.getElementById('histFrom').value;
+    historyFilters.toDate = document.getElementById('histTo').value;
+    historyFilters.vendorId = document.getElementById('histVendor').value;
+    renderHistoryForm();
+  }
+
+  async function openHistoryDetail(grnId){
+    const area = document.getElementById('historyDetailArea');
+    area.innerHTML = '<div class="loading">Loading…</div>';
+
+    const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
+    if(error){ area.innerHTML = `<div class="empty">${error.message}</div>`; return; }
+
+    const [{ data: recvLines }, { data: countedLines }] = await Promise.all([
+      sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grnId),
+      sb.from('grn_counted_lines').select('material_id, counted_quantity').eq('grn_id', grnId),
+    ]);
+
+    let photoHtml = '<div class="empty">No photo attached.</div>';
+    if(grn.slip_photo_url){
+      const { data: signed, error: eSign } = await sb.storage.from('receiving-slips').createSignedUrl(grn.slip_photo_url, 3600);
+      photoHtml = eSign
+        ? `<div class="empty">Could not load photo: ${eSign.message}</div>`
+        : `<img src="${signed.signedUrl}" style="width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1.5px solid var(--bb-line); margin-bottom:12px; background:#000;">`;
+    }
+
+    const countedTotals = {};
+    (countedLines||[]).forEach(l => {
+      const mat = refData.materials.find(m => m.id === l.material_id);
+      const label = mat ? mat.sku : l.material_id;
+      countedTotals[label] = (countedTotals[label]||0) + Number(l.counted_quantity);
+    });
+
+    area.innerHTML = `
+      <div class="card2" style="background:var(--bb-bg);">
+        <h3>${vendorName(grn.vendor_id)}</h3>
+        <p class="section-note">${grn.receiving_book_ref||'no bill no'} · ${fmtDate(grn.entry_date || grn.created_at)} · logged by ${userName(grn.created_by)} · status: ${grn.status}</p>
+        ${photoHtml}
+        <h4>Receiving Book</h4>
+        ${(recvLines||[]).length ? `<div class="table-scroll"><table><tr><th>Code</th><th>Qty</th></tr>${recvLines.map(l=>`<tr><td>${l.base_item_code}</td><td>${l.quantity}</td></tr>`).join('')}</table></div>` : '<div class="empty">Materials delivery — no code-level lines.</div>'}
+        ${Object.keys(countedTotals).length ? `<h4>Scanned</h4><div class="table-scroll"><table><tr><th>SKU</th><th>Qty</th></tr>${Object.entries(countedTotals).map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table></div>` : ''}
+      </div>
+    `;
+  }
+
+  async function renderPendingList(){
+    const { data, error } = await sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false });
+    const container = document.getElementById('pendingList');
+    if(error){ container.innerHTML = `<div class="empty">Could not load: ${error.message}</div>`; return; }
+    const pending = data || [];
+    if(pending.length === 0){ container.innerHTML = '<div class="empty">Nothing waiting.</div>'; return; }
+    container.innerHTML = pending.map(g => {
+      const rejected = !!g.rejection_reason;
+      const hrsAgo = Math.floor((Date.now() - new Date(g.created_at)) / 3600000);
+      return `
+        <div class="list-item" style="cursor:pointer; ${rejected ? 'border-color:var(--bb-rust); background:#FCF5F2;' : ''}" onclick="openAddDetails('${g.id}')">
+          <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${rejected ? 'open' : g.grn_type}">${rejected ? 'Rejected' : g.grn_type}</span></div>
+          <div class="meta">${g.receiving_book_ref || 'no bill no'} · ${fmtDate(g.created_at)} · by ${userName(g.created_by)}${!rejected && hrsAgo>=3 ? ' · ⚠ '+hrsAgo+'h uncounted' : ''}</div>
+          ${rejected ? `<div class="meta" style="color:var(--bb-rust);">Reason: ${g.rejection_reason}</div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  function openAddDetails(id){ selectedDetailGrn = id; localCountedLines = []; boySub = 'detail'; renderBoy(); }
+
+  const SIZE_OPTIONS = ['36','37','38','39','40','41','42'];
+
+  // Looks up an existing stock variant by SKU, or creates it if this exact
+  // size of this code has never been scanned before. Uses ON CONFLICT DO
+  // NOTHING (not upsert) deliberately — the app only needs to ADD new size
+  // variants, never edit existing ones, so it never needs UPDATE privilege.
+  async function getOrCreateVariant(baseCode, size){
+    const sku = baseCode + '-' + size;
+    const existingLocal = refData.materials.find(m => m.sku === sku);
+    if(existingLocal) return existingLocal.id;
+    const { data: ins, error: e1 } = await sb.from('materials')
+      .insert({ category:'stock', sku, base_item_code: baseCode, name: sku })
+      .select('id').maybeSingle();
+    if(!e1 && ins){
+      refData.materials.push({ id: ins.id, category:'stock', sku, base_item_code: baseCode, name: sku });
+      return ins.id;
+    }
+    const { data: existing, error: e2 } = await sb.from('materials').select('*').eq('sku', sku).maybeSingle();
+    if(e2 || !existing) throw new Error('Could not resolve variant ' + sku + (e2 ? ': '+e2.message : ''));
+    refData.materials.push(existing);
+    return existing.id;
+  }
+
+  // Live reconciliation, computed entirely client-side as lines are added —
+  // this is what surfaces a mismatch to the boy DURING entry rather than
+  // only at approval time, which is exactly what caused the earlier
+  // LS119/LS278/LS279 confusion.
+  function computeCountedByCode(){
+    const counted = {};
+    localCountedLines.forEach(l => {
+      const mat = refData.materials.find(m => m.id === l.material_id);
+      const code = mat ? mat.base_item_code : l.label.split('-').slice(0,-1).join('-');
+      counted[code] = (counted[code]||0) + Number(l.qty);
+    });
+    return counted;
+  }
+  function renderLiveVarianceTable(){
+    const codes = Object.keys(currentGrnReceivedQty);
+    if(codes.length === 0) return '';
+    const counted = computeCountedByCode();
+    const rows = codes.map(code => {
+      const book = currentGrnReceivedQty[code];
+      const cnt = counted[code] || 0;
+      const diff = cnt - book;
+      return `<tr><td>${code}</td><td>${book}</td><td>${cnt}</td><td class="variance ${diff===0?'zero':'nonzero'}">${diff>0?'+':''}${diff}</td></tr>`;
+    }).join('');
+    return `<h4>Book vs. Counted So Far</h4><div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Counted</th><th>Δ</th></tr>${rows}</table></div>`;
+  }
+
+  async function renderAddDetailsForm(){
+    const { data: pending, error } = await sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false });
+    const area = document.getElementById('boyFormArea');
+    if(error){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
+    if(!pending || pending.length === 0){ area.innerHTML = '<div class="card2 accent-detail"><h3>ADD DETAILS</h3><div class="empty">No logged deliveries waiting.</div></div>'; return; }
+    if(!selectedDetailGrn || !pending.find(g => g.id === selectedDetailGrn)){ selectedDetailGrn = pending[0].id; localCountedLines = []; }
+    const grn = pending.find(g => g.id === selectedDetailGrn);
+
+    const opts = pending.map(g => `<option value="${g.id}" ${g.id===selectedDetailGrn?'selected':''}>${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}</option>`).join('');
+
+    let entryFields = '';
+    let allowedCodes = [];
+    currentGrnReceivedQty = {};
+    if(grn.grn_type === 'stock'){
+      // Only the codes actually logged on THIS delivery — not every SKU
+      // that has ever existed. This is the fix for the LS119/LS278/LS279
+      // mix-up: the dropdown can no longer offer a code that was never
+      // on this delivery's Receiving Book.
+      const { data: recvLines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grn.id);
+      (recvLines||[]).forEach(l => { currentGrnReceivedQty[l.base_item_code] = (currentGrnReceivedQty[l.base_item_code]||0) + Number(l.quantity); });
+      allowedCodes = Object.keys(currentGrnReceivedQty);
+      entryFields = `
+        <label>SKU (from this delivery's Receiving Book)</label>
+        <select id="countedCode">${allowedCodes.map(c => `<option value="${c}">${c}</option>`).join('')}</select>
+        <label>Size</label>
+        <select id="countedSize">${SIZE_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
+        <label>Qty</label>
+        <input type="number" id="countedQty">
+        <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('stock')">+ Add line</button>
+        <h4>Or upload an Excel</h4>
+        <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(this, ${JSON.stringify(allowedCodes)})">
+      `;
+    } else {
+      const types = refData.materials.filter(m => m.category === 'materials');
+      entryFields = `
+        <label>Material Type</label>
+        <select id="countedMaterialType">${types.map(m => `<option value="${m.id}">${m.name}</option>`).join('')}</select>
+        <label>Qty</label>
+        <input type="number" id="countedQty">
+        <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('materials')">+ Add line</button>
+      `;
+    }
+
+    const linesHtml = localCountedLines.length ? `
+      <div class="table-scroll"><table><tr><th>Item</th><th>Qty</th><th></th></tr>
+      ${localCountedLines.map((l,i) => `<tr><td>${l.label}</td><td>${l.qty}</td><td><button class="icon-btn" onclick="removeLocalCountedLine(${i})">✕</button></td></tr>`).join('')}
+      </table></div>` : '<div class="empty">No lines added yet.</div>';
+
+    area.innerHTML = `
+      <div class="card2 accent-detail">
+        <h3>ADD DETAILS</h3>
+        <label>Which delivery?</label>
+        <select onchange="selectedDetailGrn=this.value; localCountedLines=[]; renderBoy();">${opts}</select>
+        ${grn.rejection_reason ? `<div class="badge open" style="display:inline-block; margin:8px 0;">Sent back: ${grn.rejection_reason}</div>` : ''}
+        <h4>Entry</h4>
+        ${entryFields}
+        <h4>Lines so far</h4>
+        ${linesHtml}
+        ${grn.grn_type === 'stock' ? renderLiveVarianceTable() : ''}
+        <button class="btn btn-primary btn-block" id="submitDetailsBtn" onclick="submitForApproval()">Submit for Approval</button>
+      </div>
+    `;
+  }
+
+  async function addLocalCountedLine(kind){
+    const qty = Number(document.getElementById('countedQty').value);
+    if(!qty || qty <= 0){ alert('Enter a quantity'); return; }
+    if(kind === 'stock'){
+      const code = document.getElementById('countedCode').value;
+      const size = document.getElementById('countedSize').value;
+      try{
+        const variantId = await getOrCreateVariant(code, size);
+        localCountedLines.push({ material_id: variantId, qty, method: 'scan', label: code + '-' + size });
+        renderAddDetailsForm();
+      }catch(err){ alert(err.message); }
+    } else {
+      const materialTypeId = document.getElementById('countedMaterialType').value;
+      const mat = refData.materials.find(m => m.id === materialTypeId);
+      localCountedLines.push({ material_id: materialTypeId, qty, method: 'manual', label: mat.name });
+      renderAddDetailsForm();
+    }
+  }
+  function removeLocalCountedLine(idx){ localCountedLines.splice(idx,1); renderAddDetailsForm(); }
+
+  let pendingBulkExcelData = null;
+
+  async function handleExcelUpload(input, allowedCodes){
+    const file = input.files[0];
+    if(!file) return;
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type:'array' });
+
+    // Every sheet, one column, no header — one row per physically scanned
+    // unit (e.g. 8 rows reading "1155-39" means qty 8, not one row saying
+    // qty=8). Tally occurrences across every sheet in the file.
+    const skuTally = {};
+    wb.SheetNames.forEach(sheetName => {
+      const sheet = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header:1 });
+      rows.forEach(row => {
+        const raw = row[0];
+        if(!raw) return;
+        const sku = String(raw).trim().toUpperCase();
+        if(!/^.+-\d+$/.test(sku)) return;
+        skuTally[sku] = (skuTally[sku]||0) + 1;
+      });
+    });
+
+    if(Object.keys(skuTally).length === 0){ alert('No valid SKU rows found in the file'); input.value=''; return; }
+
+    // Split each tallied SKU into code + size, matching against this
+    // delivery's Receiving Book codes. Some exports omit the "LS" prefix
+    // on the value itself (e.g. "1155-39" instead of "LS1155-39") — try
+    // both forms before giving up on a code.
+    const matched = {};
+    const unmatched = [];
+    Object.entries(skuTally).forEach(([sku, qty]) => {
+      const m = sku.match(/^(.+)-(\d+)$/);
+      let code = m[1], size = m[2];
+      if(!allowedCodes.includes(code) && allowedCodes.includes('LS'+code)) code = 'LS'+code;
+      if(!allowedCodes.includes(code)){ unmatched.push({ sku, qty }); return; }
+      matched[code+'-'+size] = { code, size, qty };
+    });
+
+    if(Object.keys(matched).length === 0){
+      alert('None of the SKUs in this file are on this delivery\'s Receiving Book. Check the file, or confirm you picked the right delivery.');
+      input.value = '';
+      return;
+    }
+
+    const summaryByCode = {};
+    Object.values(matched).forEach(({code, qty}) => { summaryByCode[code] = (summaryByCode[code]||0) + qty; });
+    const grandTotal = Object.values(summaryByCode).reduce((s,q)=>s+q, 0);
+
+    const summaryRows = Object.entries(summaryByCode).map(([code,qty]) =>
+      `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${code}</span><span class="mono">${qty}</span></div></div>`
+    ).join('');
+    const unmatchedHtml = unmatched.length ? `
+      <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">Not on this delivery's Receiving Book — skipped:</p>
+      <ul style="font-size:12.5px; color:var(--bb-rust);">${unmatched.map(u=>`<li>${u.sku} × ${u.qty}</li>`).join('')}</ul>
+    ` : '';
+
+    pendingBulkExcelData = matched;
+    showConfirmModal('Confirm counted quantities', `
+      <p style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--bb-ink-muted); margin-top:0;">Summary</p>
+      ${summaryRows}
+      <div class="modal-total">Total: ${grandTotal}</div>
+      ${unmatchedHtml}
+    `, confirmBulkExcelImport);
+    input.value = '';
+  }
+
+  async function confirmBulkExcelImport(){
+    if(!pendingBulkExcelData) return;
+    let added = 0;
+    const errors = [];
+    for(const [sku, { code, size, qty }] of Object.entries(pendingBulkExcelData)){
+      try{
+        const variantId = await getOrCreateVariant(code, size);
+        localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: sku });
+        added++;
+      }catch(err){ errors.push(sku + ' (' + err.message + ')'); }
+    }
+    pendingBulkExcelData = null;
+    if(errors.length) alert('Added ' + added + ' line(s). Errors: ' + errors.join(', '));
+    renderAddDetailsForm();
+  }
+
+  function submitForApproval(){
+    if(localCountedLines.length === 0){ alert('Add at least one line first'); return; }
+    const grandTotal = localCountedLines.reduce((s,l) => s + Number(l.qty), 0);
+    const rows = localCountedLines.map(l => `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${l.label}</span><span class="mono">${l.qty}</span></div></div>`).join('');
+    const varianceHtml = Object.keys(currentGrnReceivedQty).length ? renderLiveVarianceTable() : '';
+    const hasNonZero = Object.keys(currentGrnReceivedQty).some(code => (computeCountedByCode()[code]||0) !== currentGrnReceivedQty[code]);
+    const body = `
+      ${rows}
+      <div class="modal-total">Grand Total: ${grandTotal}</div>
+      ${varianceHtml}
+      ${hasNonZero ? '<p style="color:var(--bb-rust); font-size:12px; font-weight:600; margin-bottom:0;">There\'s a difference against the Receiving Book above — check it\'s correct before continuing.</p>' : ''}
+    `;
+    showConfirmModal('Check before submitting', body, doSubmitForApproval);
+  }
+
+  async function doSubmitForApproval(){
+    if(writeInFlight) return;
+    writeInFlight = true;
+    const btn = document.getElementById('submitDetailsBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Submitting…'; }
+    try{
+      const rows = localCountedLines.map(l => ({
+        grn_id: selectedDetailGrn, material_id: l.material_id, counted_quantity: l.qty, entry_method: l.method, entered_by: me.id
+      }));
+      const { error: e1 } = await sb.from('grn_counted_lines').insert(rows);
+      if(e1){ alert('Could not save lines: ' + e1.message); return; }
+
+      const { error: e2 } = await sb.rpc('submit_grn_details', { p_grn_id: selectedDetailGrn, p_submitter_id: me.id });
+      if(e2){ alert('Lines saved, but submit failed: ' + e2.message + ' — try Submit again, your lines are safe.'); return; }
+
+      selectedDetailGrn = null;
+      localCountedLines = [];
+      boySub = 'log';
+      alert('Submitted — now in the approval queue.');
+      await renderBoy();
+    } finally {
+      writeInFlight = false;
+      if(btn){ btn.disabled = false; btn.textContent = 'Submit for Approval'; }
+    }
+  }
+
+  // ---------- DISCREPANCIES ----------
+  async function renderDiscrepancies(){
+    const el = document.getElementById('panel-discrepancies');
+    el.innerHTML = '<div class="loading">Loading…</div>';
+    const { data, error } = await sb.from('variance_flags').select('*').order('flagged_at', { ascending:false });
+    if(error){ el.innerHTML = `<div class="card2"><div class="empty">Could not load discrepancies: ${error.message}</div></div>`; return; }
+    let flags = data || [];
+
+    // variance_flags stores grn_id, not vendor_id directly — resolve vendor
+    // through the GRN it belongs to, only fetching the rows actually needed.
+    const grnIds = Array.from(new Set(flags.map(f => f.grn_id)));
+    let grnVendorMap = {};
+    if(grnIds.length){
+      const { data: grns, error: e2 } = await sb.from('grn').select('id, vendor_id').in('id', grnIds);
+      if(e2){ el.innerHTML = `<div class="card2"><div class="empty">Could not resolve vendors: ${e2.message}</div></div>`; return; }
+      (grns||[]).forEach(g => { grnVendorMap[g.id] = g.vendor_id; });
+    }
+    function flagVendorName(f){ return vendorName(grnVendorMap[f.grn_id]); }
+
+    if(discFilter==='open') flags = flags.filter(f => f.status==='open');
+    if(discFilter==='resolved') flags = flags.filter(f => f.status!=='open');
+
+    el.innerHTML = `
+      <div class="card2">
+        <h3>Discrepancy Register</h3>
+        <div class="filter-row">
+          <span class="fchip ${discFilter==='all'?'active':''}" onclick="discFilter='all'; renderDiscrepancies();">All</span>
+          <span class="fchip ${discFilter==='open'?'active':''}" onclick="discFilter='open'; renderDiscrepancies();">Open</span>
+          <span class="fchip ${discFilter==='resolved'?'active':''}" onclick="discFilter='resolved'; renderDiscrepancies();">Resolved</span>
+        </div>
+        ${flags.length===0 ? '<div class="empty">Nothing here.</div>' : flags.map(f => `
+          <div class="list-item">
+            <div class="top"><b>${flagVendorName(f)} · ${keyOf(f)}</b><span class="badge ${f.status==='open'?'open':'resolved'}">${f.status}</span></div>
+            <div class="meta">${f.quantity_a} to ${f.quantity_b} (${f.variance>0?'+':''}${f.variance}) · reason: ${f.reason||'—'} · ${fmtDate(f.flagged_at)} · flagged by ${userName(f.flagged_by)}</div>
+            ${f.status!=='open' ? `<div class="meta">Resolved by ${userName(f.resolved_by)} · ${f.resolution_notes||''}</div>` : `<button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="resolveDiscrepancy('${f.id}')">Resolve</button>`}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  async function resolveDiscrepancy(id){
+    const notes = prompt('Resolution notes (e.g. vendor credited on next delivery, confirmed miscount and adjusted):');
+    if(notes === null) return;
+    if(!notes.trim()){ alert('Enter a note explaining how this was resolved'); return; }
+    const { error } = await sb.from('variance_flags').update({
+      status: 'resolved', resolution_notes: notes.trim(), resolved_by: me.id, resolved_at: new Date().toISOString()
+    }).eq('id', id);
+    if(error){ alert('Could not resolve: ' + error.message); return; }
+    await renderDiscrepancies();
+  }
+
+  // ---------- APPROVER TAB ----------
+  async function getRequiredApprovals(grnType, vendorId){
+    const applies_to = grnType === 'stock' ? 'stock_grn' : 'materials_grn';
+    let { count } = await sb.from('approval_matrix').select('*', { count:'exact', head:true }).eq('applies_to', applies_to).eq('active', true).eq('vendor_id', vendorId);
+    if(!count){
+      ({ count } = await sb.from('approval_matrix').select('*', { count:'exact', head:true }).eq('applies_to', applies_to).eq('active', true).is('vendor_id', null));
+    }
+    return count || 0;
+  }
+
+  async function renderApprover(){
+    const el = document.getElementById('panel-approver');
+    el.innerHTML = '<div class="loading">Loading...</div>';
+    const { data: queue, error } = await sb.from('grn').select('*').eq('status','submitted').order('submitted_at', { ascending:true });
+    if(error){ el.innerHTML = `<div class="card2"><div class="empty">Could not load queue: ${error.message}</div></div>`; return; }
+
+    el.innerHTML = `
+      <div class="grid2">
+        <div class="card2">
+          <h3>Approval Queue</h3>
+          <div id="queueList"></div>
+        </div>
+        <div id="approvalDetail"><div class="card2"><div class="empty">Select an item from the queue.</div></div></div>
+      </div>
+    `;
+    const queueList = document.getElementById('queueList');
+    if(!queue || queue.length === 0){ queueList.innerHTML = '<div class="empty">Nothing pending.</div>'; return; }
+    queueList.innerHTML = (await Promise.all(queue.map(async g => {
+      const required = await getRequiredApprovals(g.grn_type, g.vendor_id);
+      const { count: done } = await sb.from('grn_approvals').select('*', { count:'exact', head:true }).eq('grn_id', g.id).eq('cycle', g.submission_cycle).eq('action','approved');
+      return `<div class="list-item" style="cursor:pointer;" onclick="openApprovalDetail('${g.id}')">
+        <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${g.grn_type}">${g.grn_type}</span></div>
+        <div class="meta">${g.receiving_book_ref||'no bill no'} . approvals ${done||0}/${required}</div>
+      </div>`;
+    }))).join('');
+  }
+
+  async function openApprovalDetail(grnId){
+    selectedApprovalGrn = grnId;
+    const el = document.getElementById('approvalDetail');
+    el.innerHTML = '<div class="card2"><div class="loading">Loading...</div></div>';
+
+    const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
+    if(error){ el.innerHTML = `<div class="card2"><div class="empty">${error.message}</div></div>`; return; }
+
+    const required = await getRequiredApprovals(grn.grn_type, grn.vendor_id);
+    const { count: done } = await sb.from('grn_approvals').select('*', { count:'exact', head:true }).eq('grn_id', grnId).eq('cycle', grn.submission_cycle).eq('action','approved');
+    const nextStep = (done||0) + 1;
+    const isFinal = nextStep >= required;
+    const sameUser = me.id === grn.created_by || me.id === grn.details_entered_by;
+
+    let photoHtml = '<div class="empty">No photo attached.</div>';
+    if(grn.slip_photo_url){
+      const { data: signed, error: eSign } = await sb.storage.from('receiving-slips').createSignedUrl(grn.slip_photo_url, 3600);
+      photoHtml = eSign
+        ? `<div class="empty">Could not load photo: ${eSign.message}</div>`
+        : `<img src="${signed.signedUrl}" style="width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1px solid var(--bb-line); margin-bottom:12px; background:#000;">`;
+    }
+
+    let varianceHtml = '';
+    if(grn.grn_type === 'stock'){
+      const { data: rows } = await sb.from('grn_receiving_vs_scanned_v').select('*').eq('grn_id', grnId);
+      const grandTotalVariance = (rows||[]).reduce((s,r) => s + Number(r.variance), 0);
+      const possibleSwap = grandTotalVariance === 0 && (rows||[]).some(r => Number(r.variance) !== 0);
+      varianceHtml = `
+        <h4>Receiving Book vs. Scan</h4>
+        <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Scanned</th><th>D</th><th>Reason</th></tr>
+        ${(rows||[]).map(r => `
+          <tr><td>${r.base_item_code}</td><td>${r.receiving_total}</td><td>${r.counted_total}</td>
+            <td class="variance ${Number(r.variance)===0?'zero':'nonzero'}">${r.variance>0?'+':''}${r.variance}</td>
+            <td>${Number(r.variance)!==0 ? `<select data-reason-key="${r.base_item_code}" style="margin-bottom:0; padding:5px;">
+                <option value="">-- Select --</option>
+                <option value="miscount">Miscount</option>
+                <option value="picked_before_count">Picked before count</option>
+                <option value="wrong_labeling">Code mix-up</option>
+                <option value="other">Other</option>
+              </select>` : '-'}</td></tr>`).join('')}
+        </table></div>
+        ${possibleSwap ? '<p style="color:var(--bb-brass); font-size:11px; font-weight:600;">Totals match overall but individual codes do not match - looks like a code mix-up, not a shortage.</p>' : ''}
+      `;
+    } else {
+      const { data: lines } = await sb.from('grn_counted_lines').select('material_id, counted_quantity').eq('grn_id', grnId);
+      const totals = {};
+      (lines||[]).forEach(l => { totals[l.material_id] = (totals[l.material_id]||0) + Number(l.counted_quantity); });
+      varianceHtml = `<div class="table-scroll"><table><tr><th>Item</th><th>Qty</th></tr>${Object.keys(totals).map(mid => `<tr><td>${materialName(mid)}</td><td>${totals[mid]}</td></tr>`).join('')}</table></div>`;
+    }
+
+    document.getElementById('approvalDetail').innerHTML = `
+      <div class="card2">
+        <h3>${vendorName(grn.vendor_id)}</h3>
+        <div style="font-size:11.5px; color:var(--bb-ink-muted); margin-bottom:10px;">${grn.receiving_book_ref||'no bill no'} . ${grn.grn_type} . logged by ${userName(grn.created_by)}</div>
+        ${sameUser ? '<div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">You logged or detailed this entry - a teammate needs to approve it, not you.</div>' : ''}
+        <div class="list-item" style="cursor:default;">Approval ${nextStep} of ${required}${isFinal ? ' - this click posts to the ledger' : ' - one more approval needed after this'}</div>
+        ${photoHtml}
+        ${varianceHtml}
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button class="btn" style="background:transparent; border:1.5px solid var(--bb-rust); color:var(--bb-rust);" onclick="rejectGrnLive('${grnId}')">Reject</button>
+          <button class="btn" style="background:var(--bb-sage); color:#fff;" ${sameUser?'disabled style="opacity:0.5;"':''} id="approveBtn" onclick="approveGrnLive('${grnId}')">${isFinal ? 'Approve and Post to Ledger' : 'Record Approval '+nextStep+' of '+required}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  async function approveGrnLive(grnId){
+    if(writeInFlight) return;
+    writeInFlight = true;
+    const btn = document.getElementById('approveBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Working...'; }
+    try{
+      const reasonSelects = document.querySelectorAll('[data-reason-key]');
+      const reasons = {};
+      let missing = false;
+      reasonSelects.forEach(sel => {
+        if(!sel.value){ missing = true; }
+        reasons[sel.dataset.reasonKey] = sel.value;
+      });
+      if(missing){ alert('Pick a reason for each flagged code first'); return; }
+
+      const { data, error } = await sb.rpc('approve_grn', { p_grn_id: grnId, p_approver_id: me.id, p_reasons: reasons });
+      if(error){ alert('Could not approve: ' + error.message); return; }
+      alert(data.status === 'posted' ? 'Posted to ledger.' : 'Approval recorded (' + data.approvals_done + '/' + data.approvals_required + ').');
+      selectedApprovalGrn = null;
+      await renderApprover();
+    } finally {
+      writeInFlight = false;
+    }
+  }
+
+  async function rejectGrnLive(grnId){
+    if(writeInFlight) return;
+    const reason = prompt('Reason for rejection (the warehouse boy will see this):');
+    if(reason === null) return;
+    writeInFlight = true;
+    try{
+      const { error } = await sb.rpc('reject_grn', { p_grn_id: grnId, p_actor_id: me.id, p_reason: reason });
+      if(error){ alert('Could not reject: ' + error.message); return; }
+      alert('Sent back to the warehouse boy.');
+      selectedApprovalGrn = null;
+      await renderApprover();
+    } finally {
+      writeInFlight = false;
+    }
+  }
+
+  // ---------- ADMIN TAB ----------
+  let adminData = { vendors:[], materialTypes:[], stockVariants:[], rules:[] };
+
+  async function loadAdminData(){
+    const [{data:v}, {data:m}, {data:r}] = await Promise.all([
+      sb.from('vendors').select('*').order('name'),
+      sb.from('materials').select('*').order('name'),
+      sb.from('approval_matrix').select('*').order('applies_to').order('vendor_id').order('step_number')
+    ]);
+    adminData.vendors = v || [];
+    adminData.materialTypes = (m || []).filter(x => x.category === 'materials');
+    adminData.stockVariants = (m || []).filter(x => x.category === 'stock');
+    adminData.rules = r || [];
+  }
+
+  async function renderAdmin(){
+    const el = document.getElementById('panel-admin');
+    el.innerHTML = '<div class="loading">Loading...</div>';
+    await loadAdminData();
+    refData.vendors = adminData.vendors; // keep the rest of the app in sync with any changes made here
+
+    el.innerHTML = `
+      <div class="grid2">
+        <div class="card2">
+          <h3>Vendors</h3>
+          <div id="vendorsList"></div>
+          <h4>Add Vendor</h4>
+          <label>Name</label><input type="text" id="newVendorName">
+          <label>Category</label>
+          <select id="newVendorCategory"><option value="stock">Stock</option><option value="materials">Materials</option></select>
+          <label style="display:flex; align-items:center; gap:6px; text-transform:none; font-size:12.5px;">
+            <input type="checkbox" id="newVendorPhoto" checked style="width:auto; margin-bottom:0;"> Photo required
+          </label>
+          <button class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="addVendor()">+ Add Vendor</button>
+        </div>
+
+        <div class="card2">
+          <h3>Material Types</h3>
+          <p class="section-note">Feeds the Add Details dropdown for materials-category vendors.</p>
+          <div id="matTypesList"></div>
+          <h4>Add Material Type</h4>
+          <label>Name</label><input type="text" id="newMatName" placeholder="e.g. Box - Large">
+          <label>Unit</label><input type="text" id="newMatUnit" placeholder="pcs">
+          <button class="btn btn-secondary btn-sm" onclick="addMaterialType()">+ Add Type</button>
+        </div>
+
+        <div class="card2">
+          <h3>Stock Variants</h3>
+          <p class="section-note">Usually created automatically when a boy scans a new size. Add here to pre-register one ahead of time.</p>
+          <div id="stockVariantsList"></div>
+          <h4>Add Variant</h4>
+          <div style="display:flex; gap:8px;">
+            <div style="flex:1;"><label>Base Code</label><input type="text" id="newVarCode" placeholder="LS280"></div>
+            <div style="flex:1;"><label>Size</label><input type="text" id="newVarSize" placeholder="38"></div>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="addStockVariant()">+ Add Variant</button>
+        </div>
+
+        <div class="card2">
+          <h3>Approval Rules</h3>
+          <p class="section-note">Leave vendor blank for a default rule covering every vendor of that type.</p>
+          <div id="rulesList"></div>
+          <h4>Add Approval Step</h4>
+          <label>Applies to</label>
+          <select id="newRuleAppliesTo"><option value="stock_grn">Stock deliveries</option><option value="materials_grn">Materials deliveries</option></select>
+          <label>Vendor (optional)</label>
+          <select id="newRuleVendor"><option value="">Default - all vendors</option>${adminData.vendors.map(v => `<option value="${v.id}">${v.name}</option>`).join('')}</select>
+          <label>Approver</label>
+          <select id="newRuleApprover">${refData.users.map(u => `<option value="${u.id}">${u.full_name} (${u.role.replace('_',' ')})</option>`).join('')}</select>
+          <button class="btn btn-secondary btn-sm" onclick="addApprovalRule()">+ Add Step</button>
+        </div>
+      </div>
+    `;
+    renderVendorsList();
+    renderMatTypesList();
+    renderStockVariantsList();
+    renderRulesList();
+  }
+
+  function renderVendorsList(){
+    document.getElementById('vendorsList').innerHTML = adminData.vendors.map(v => `
+      <div class="list-item" style="cursor:default; ${v.active===false?'opacity:0.5;':''}">
+        <div class="top"><b>${v.name}</b><button class="icon-btn" onclick="toggleActive('vendors','${v.id}',${v.active===false})">${v.active===false?'Activate':'Deactivate'}</button></div>
+        <div class="meta">${v.category} . photo ${v.photo_required?'required':'optional'}${v.active===false?' . INACTIVE':''}</div>
+      </div>`).join('') || '<div class="empty">No vendors yet.</div>';
+  }
+  function renderMatTypesList(){
+    document.getElementById('matTypesList').innerHTML = adminData.materialTypes.map(m => `
+      <div class="list-item" style="cursor:default; ${m.active===false?'opacity:0.5;':''}">
+        <div class="top"><b>${m.name}</b><button class="icon-btn" onclick="toggleActive('materials','${m.id}',${m.active===false})">${m.active===false?'Activate':'Deactivate'}</button></div>
+        <div class="meta">unit: ${m.unit}${m.active===false?' . INACTIVE':''}</div>
+      </div>`).join('') || '<div class="empty">No material types yet.</div>';
+  }
+  function renderStockVariantsList(){
+    document.getElementById('stockVariantsList').innerHTML = adminData.stockVariants.map(s => `
+      <div class="list-item" style="cursor:default; ${s.active===false?'opacity:0.5;':''}">
+        <div class="top"><b>${s.sku}</b><button class="icon-btn" onclick="toggleActive('materials','${s.id}',${s.active===false})">${s.active===false?'Activate':'Deactivate'}</button></div>
+        <div class="meta">code ${s.base_item_code} . size ${s.sku.split('-').slice(-1)[0]}${s.active===false?' . INACTIVE':''}</div>
+      </div>`).join('') || '<div class="empty">No stock variants yet.</div>';
+  }
+  function renderRulesList(){
+    const groups = {};
+    adminData.rules.forEach(r => {
+      const key = r.applies_to + ' . ' + (r.vendor_id ? vendorName(r.vendor_id) : 'Default (all vendors)');
+      (groups[key] = groups[key] || []).push(r);
+    });
+    const html = Object.keys(groups).map(key => `
+      <div style="margin-bottom:10px;">
+        <div style="font-size:11.5px; font-weight:700; margin-bottom:4px;">${key}</div>
+        ${groups[key].sort((a,b)=>a.step_number-b.step_number).map(r => `
+          <div class="list-item" style="cursor:default; padding:8px 12px; ${r.active===false?'opacity:0.5;':''}">
+            <div class="top"><span>Step ${r.step_number} . ${userName(r.approver_user_id)}</span>
+              <button class="icon-btn" onclick="toggleActive('approval_matrix','${r.id}',${r.active===false})">${r.active===false?'Activate':'Deactivate'}</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+    document.getElementById('rulesList').innerHTML = html || '<div class="empty">No approval rules yet - nothing can be approved until at least one exists.</div>';
+  }
+
+  async function toggleActive(table, id, makeActive){
+    const { error } = await sb.from(table).update({ active: makeActive }).eq('id', id);
+    if(error){ alert('Could not update: ' + error.message); return; }
+    await renderAdmin();
+  }
+
+  async function addVendor(){
+    const name = document.getElementById('newVendorName').value.trim();
+    if(!name){ alert('Enter a vendor name'); return; }
+    const { error } = await sb.from('vendors').insert({
+      name,
+      category: document.getElementById('newVendorCategory').value,
+      photo_required: document.getElementById('newVendorPhoto').checked
+    });
+    if(error){ alert('Could not add vendor: ' + error.message); return; }
+    await renderAdmin();
+  }
+
+  async function addMaterialType(){
+    const name = document.getElementById('newMatName').value.trim();
+    if(!name){ alert('Enter a name'); return; }
+    const unit = document.getElementById('newMatUnit').value.trim() || 'pcs';
+    const { error } = await sb.from('materials').insert({ category:'materials', name, unit });
+    if(error){ alert('Could not add: ' + error.message); return; }
+    await renderAdmin();
+  }
+
+  async function addStockVariant(){
+    const code = document.getElementById('newVarCode').value.trim();
+    const size = document.getElementById('newVarSize').value.trim();
+    if(!code || !size){ alert('Enter both code and size'); return; }
+    const sku = code + '-' + size;
+    const { error } = await sb.from('materials').insert({ category:'stock', sku, base_item_code: code, name: sku });
+    if(error){ alert('Could not add: ' + error.message); return; }
+    await renderAdmin();
+  }
+
+  async function addApprovalRule(){
+    const appliesTo = document.getElementById('newRuleAppliesTo').value;
+    const vendorId = document.getElementById('newRuleVendor').value || null;
+    const approverId = document.getElementById('newRuleApprover').value;
+
+    let query = sb.from('approval_matrix').select('step_number').eq('applies_to', appliesTo).eq('active', true);
+    query = vendorId ? query.eq('vendor_id', vendorId) : query.is('vendor_id', null);
+    const { data: existing } = await query;
+    const nextStep = (existing && existing.length) ? Math.max(...existing.map(r => r.step_number)) + 1 : 1;
+
+    const { error } = await sb.from('approval_matrix').insert({
+      applies_to: appliesTo, vendor_id: vendorId, step_number: nextStep, approver_user_id: approverId
+    });
+    if(error){ alert('Could not add rule: ' + error.message); return; }
+    await renderAdmin();
+  }
+
+  // ---------- EXPORTS ----------
+  function renderExports(){
+    const el = document.getElementById('panel-exports');
+    el.innerHTML = `
+      <div class="card2">
+        <h3>EXPORTS</h3>
+        <p class="section-note">Every Add Details entry for the day you pick — however it was entered, typed by hand or uploaded as Excel — as one row per physical unit, matching the exact format your scanner produces. Materials-category entries (no SKU/size) aren't included, since they don't have a comparable raw format.</p>
+        <label>Date</label>
+        <input type="date" id="exportDate" value="${todayStr()}">
+        <button class="btn btn-primary btn-block" id="exportBtn" onclick="generateDayWiseExport()">Export This Day</button>
+      </div>
+    `;
+  }
+
+  async function generateDayWiseExport(){
+    const dateInput = document.getElementById('exportDate').value;
+    if(!dateInput){ alert('Pick a date'); return; }
+    const btn = document.getElementById('exportBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Building file…'; }
+    try{
+      const dayStart = dateInput + 'T00:00:00';
+      const dayEnd = dateInput + 'T23:59:59';
+
+      const { data: lines, error } = await sb.from('grn_counted_lines')
+        .select('material_id, counted_quantity, entered_at')
+        .gte('entered_at', dayStart)
+        .lte('entered_at', dayEnd);
+      if(error){ alert('Could not load: ' + error.message); return; }
+      if(!lines || lines.length === 0){ alert('No detail entries found for ' + dateInput); return; }
+
+      // Expand each line into one row per physical unit, grouped into one
+      // "sheet" per base code — the exact structure the Excel upload
+      // itself expects and produces, so this can be re-uploaded elsewhere
+      // or archived in the same shape it originally arrived in.
+      const sheetData = {};
+      let totalRows = 0;
+      lines.forEach(l => {
+        const mat = refData.materials.find(m => m.id === l.material_id);
+        if(!mat || mat.category !== 'stock') return;
+        const qty = Math.round(Number(l.counted_quantity));
+        if(!sheetData[mat.base_item_code]) sheetData[mat.base_item_code] = [];
+        for(let i=0; i<qty; i++){ sheetData[mat.base_item_code].push([mat.sku]); totalRows++; }
+      });
+
+      if(totalRows === 0){ alert('No stock (SKU-based) entries found for ' + dateInput); return; }
+
+      const wb = XLSX.utils.book_new();
+      Object.keys(sheetData).sort().forEach(code => {
+        const ws = XLSX.utils.aoa_to_sheet(sheetData[code]);
+        XLSX.utils.book_append_sheet(wb, ws, code.substring(0,31));
+      });
+      XLSX.writeFile(wb, `counted_details_${dateInput}.xlsx`);
+    } finally {
+      if(btn){ btn.disabled = false; btn.textContent = 'Export This Day'; }
+    }
+  }
+</script>
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal-box">
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" style="flex:1;" onclick="closeModal()">Go Back &amp; Check</button>
+      <button class="btn btn-primary" style="flex:1;" id="modalConfirmBtn" onclick="confirmModal()">Confirm</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>
