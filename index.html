@@ -288,7 +288,7 @@
   // query), not the real security boundary. The real boundary is the
   // RLS policies (migration 12), which block this data even if
   // someone bypasses the UI entirely via the browser console.
-  const READY_TABS = ['boy','approver','owner','discrepancies','ledger','admin','exports'];
+  const READY_TABS = ['boy','approver','owner','discrepancies','ledger','admin','exports','team'];
   const ROLE_TABS = {
     warehouse_boy: ['boy'],
     approver: ['approver'],
@@ -390,6 +390,7 @@
     else if(id === 'approver') await renderApprover();
     else if(id === 'admin') await renderAdmin();
     else if(id === 'exports') await renderExports();
+    else if(id === 'team') await renderTeamActivity();
     else renderComingSoon(id);
     window.scrollTo({top:0, behavior:'instant'});
   }
@@ -1710,6 +1711,81 @@
   }
 
   // ---------- EXPORTS ----------
+  // ---------- TEAM ACTIVITY ----------
+  let teamFilters = { fromDate:'', toDate:'' };
+
+  function summarizeAuditEntry(row){
+    const who = row.actor_user_id ? userName(row.actor_user_id) : 'System';
+    const after = row.after_state || {};
+    switch(row.action){
+      case 'grn_logged':
+        return `${who} logged a delivery from ${vendorName(after.vendor_id)}${after.receiving_book_ref ? ' ('+after.receiving_book_ref+')' : ''}`;
+      case 'details_submitted':
+        return `${who} submitted counted details for approval`;
+      case 'approved':
+        return `${who} approved a delivery (step ${after.step||'?'} of ${after.of||'?'})`;
+      case 'posted_to_ledger':
+        return `${who} posted a ${after.grn_type||''} delivery to the ledger`;
+      case 'rejected':
+        return `${who} rejected a delivery${after.reason ? ': '+after.reason : ''}`;
+      case 'vendors_insert':
+        return `${who} added vendor "${after.name}" (${after.category})`;
+      case 'vendors_update':
+        return `${who} updated vendor "${after.name}"${after.active===false ? ' — deactivated' : ''}`;
+      case 'materials_insert':
+        return `${who} added ${after.category==='stock' ? 'stock SKU' : 'material type'} "${after.sku || after.name}"`;
+      case 'materials_update':
+        return `${who} updated "${after.sku || after.name}"${after.active===false ? ' — deactivated' : ''}`;
+      case 'approval_matrix_insert':
+        return `${who} added an approval rule (step ${after.step_number}, ${after.applies_to})`;
+      case 'approval_matrix_update':
+        return `${who} changed an approval rule${after.active===false ? ' — deactivated' : ''}`;
+      case 'payments_insert':
+        return `${who} recorded a payment of ${after.amount} to ${vendorName(after.vendor_id)}`;
+      default:
+        return `${who} — ${row.action} on ${row.table_name}`;
+    }
+  }
+
+  async function renderTeamActivity(){
+    const el = document.getElementById('panel-team');
+    el.innerHTML = '<div class="card2"><div class="loading">Loading…</div></div>';
+
+    let query = sb.from('audit_log').select('*').not('actor_user_id', 'is', null).order('created_at', { ascending:false }).limit(200);
+    if(teamFilters.fromDate) query = query.gte('created_at', teamFilters.fromDate + 'T00:00:00');
+    if(teamFilters.toDate) query = query.lte('created_at', teamFilters.toDate + 'T23:59:59');
+
+    const { data, error } = await query;
+    if(error){ el.innerHTML = `<div class="card2"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
+
+    el.innerHTML = `
+      <div class="card2">
+        <h3>TEAM ACTIVITY</h3>
+        <p class="section-note">Every logged, submitted, approved, and posted action, plus configuration changes — who did it and when. System-generated bulk imports are left out to keep this focused on real team actions.</p>
+        <div style="display:flex; gap:8px;">
+          <div style="flex:1;"><label>From</label><input type="date" id="teamFrom" value="${teamFilters.fromDate}"></div>
+          <div style="flex:1;"><label>To</label><input type="date" id="teamTo" value="${teamFilters.toDate}"></div>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="applyTeamFilters()">Filter</button>
+        <h4 style="margin-top:14px;">${(data||[]).length} action(s)</h4>
+        <div id="teamActivityList">
+          ${(data||[]).length===0 ? '<div class="empty">No activity found for this range.</div>' : data.map(row => `
+            <div class="list-item" style="cursor:default;">
+              <div class="top"><span>${summarizeAuditEntry(row)}</span></div>
+              <div class="meta">${fmtDate(row.created_at)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function applyTeamFilters(){
+    teamFilters.fromDate = document.getElementById('teamFrom').value;
+    teamFilters.toDate = document.getElementById('teamTo').value;
+    renderTeamActivity();
+  }
+
   function renderExports(){
     const el = document.getElementById('panel-exports');
     el.innerHTML = `
