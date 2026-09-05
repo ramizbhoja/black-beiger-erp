@@ -216,6 +216,15 @@
 
   let me = null;          // { id, full_name, role } from app_users
   let modalConfirmCallback = null;
+  // crypto.randomUUID() needs a fairly modern browser and isn't available
+  // everywhere — this works identically on any JS engine, old or new.
+  function generateUUID(){
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c){
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
   function showConfirmModal(title, bodyHtml, onConfirm, confirmLabel){
     document.getElementById('modalTitle').textContent = title;
     document.getElementById('modalBody').innerHTML = bodyHtml;
@@ -746,6 +755,8 @@
       bulkGrns = []; bulkAllocationResult = null;
       boySub = 'log';
       await renderBoy();
+    } catch(err) {
+      alert('Something went wrong finalizing this batch: ' + err.message + '. Check History before re-entering anything.');
     } finally {
       writeInFlight = false;
       if(btn){ btn.disabled = false; }
@@ -941,7 +952,7 @@
     const btn = document.getElementById('logDeliveryBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Logging…'; }
     try{
-      const clientSubmissionId = crypto.randomUUID();
+      const clientSubmissionId = generateUUID();
       let slipPhotoPath = null;
       if(pendingPhotoBlob){
         const path = clientSubmissionId + '/slip.jpg';
@@ -966,6 +977,8 @@
       boySub = 'detail';
       selectedDetailGrn = data.grn_id;
       await renderBoy();
+    } catch(err) {
+      alert('Something went wrong logging this delivery: ' + err.message + '. Nothing was saved — please try again.');
     } finally {
       writeInFlight = false;
       if(btn){ btn.disabled = false; btn.textContent = 'Log This Delivery'; }
@@ -1333,6 +1346,8 @@
       boySub = 'log';
       alert('Submitted — now in the approval queue.');
       await renderBoy();
+    } catch(err) {
+      alert('Something went wrong submitting these details: ' + err.message + '. Your lines may already be saved — check History before re-entering them.');
     } finally {
       writeInFlight = false;
       if(btn){ btn.disabled = false; btn.textContent = 'Submit for Approval'; }
