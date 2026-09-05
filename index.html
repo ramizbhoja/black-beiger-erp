@@ -436,24 +436,25 @@
     const el = document.getElementById('panel-owner');
     el.innerHTML = '<div class="loading">Loading…</div>';
 
-    const [{ data: posted, error: e1 }, { count: pendingCount, error: e2 }, { data: flags, error: e3 }, { data: intake, error: e4 }] = await Promise.all([
+    const [{ data: posted, error: e1 }, { count: pendingCount, error: e2 }, { data: flags, error: e3 }, { data: intake, error: e4 }, { data: recountPending, error: e5 }] = await Promise.all([
       sb.from('grn').select('*').eq('status','posted').order('posted_at', { ascending:false }),
       sb.from('grn').select('*', { count:'exact', head:true }).eq('status','submitted'),
       sb.from('variance_flags').select('grn_id, status'),
       sb.from('grn').select('created_at').eq('status','intake'),
+      sb.from('grn').select('posted_at').eq('status','posted').eq('recount_status','pending'),
     ]);
-    if(e1 || e2 || e3 || e4){ el.innerHTML = `<div class="card2"><div class="empty">Could not load dashboard: ${(e1||e2||e3||e4).message}</div></div>`; return; }
+    if(e1 || e2 || e3 || e4 || e5){ el.innerHTML = `<div class="card2"><div class="empty">Could not load dashboard: ${(e1||e2||e3||e4||e5).message}</div></div>`; return; }
 
     const openFlagCount = (flags||[]).filter(f => f.status === 'open').length;
-    const intakeList = intake || [];
-    const overdueCount = intakeList.filter(g => (Date.now() - new Date(g.created_at)) / 3600000 >= 3).length;
+    const awaitingList = [...(intake||[]), ...(recountPending||[]).map(g => ({ created_at: g.posted_at }))];
+    const overdueCount = awaitingList.filter(g => (Date.now() - new Date(g.created_at)) / 3600000 >= 3).length;
 
     el.innerHTML = `
       <div class="stat-row">
         <div class="stat accent"><div class="n mono">${(posted||[]).length}</div><div class="l">Posted</div></div>
         <div class="stat"><div class="n mono">${pendingCount||0}</div><div class="l">In Approval</div></div>
         <div class="stat warn" style="cursor:pointer;" onclick="switchTab('discrepancies')"><div class="n mono">${openFlagCount}</div><div class="l">Open Variance</div></div>
-        <div class="stat ${overdueCount ? 'warn' : ''}" style="cursor:pointer;" onclick="switchTab('boy')"><div class="n mono">${intakeList.length}</div><div class="l">Awaiting Details${overdueCount ? ' — '+overdueCount+' overdue' : ''}</div></div>
+        <div class="stat ${overdueCount ? 'warn' : ''}" style="cursor:pointer;" onclick="switchTab('boy')"><div class="n mono">${awaitingList.length}</div><div class="l">Awaiting Details${overdueCount ? ' — '+overdueCount+' overdue' : ''}</div></div>
       </div>
       <div class="card2">
         <h3>Posted Deliveries</h3>
@@ -586,9 +587,9 @@
   async function renderBulkFinalizeForm(){
     const area = document.getElementById('boyFormArea');
     area.innerHTML = '<div class="card2"><div class="loading">Loading…</div></div>';
-    const { data: pending, error } = await sb.from('grn').select('*').eq('status','intake').eq('grn_type','stock').order('created_at', { ascending:true });
+    const { data: pending, error } = await sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').eq('grn_type','stock').order('posted_at', { ascending:true });
     if(error){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
-    if(!pending || pending.length === 0){ area.innerHTML = '<div class="card2 accent-bulk"><h3>BULK FINALIZE</h3><div class="empty">Nothing waiting on details.</div></div>'; return; }
+    if(!pending || pending.length === 0){ area.innerHTML = '<div class="card2 accent-bulk"><h3>BULK FINALIZE</h3><div class="empty">Nothing waiting on a physical recount.</div></div>'; return; }
 
     const grnIds = pending.map(g => g.id);
     const { data: allLines } = await sb.from('grn_receiving_lines').select('grn_id, base_item_code, quantity').in('grn_id', grnIds);
@@ -596,15 +597,15 @@
       const lines = (allLines||[]).filter(l => l.grn_id === g.id);
       const receivingByCode = {};
       lines.forEach(l => { receivingByCode[l.base_item_code] = (receivingByCode[l.base_item_code]||0) + Number(l.quantity); });
-      return { id: g.id, vendor_id: g.vendor_id, receiving_book_ref: g.receiving_book_ref, created_at: g.created_at, receivingByCode };
+      return { id: g.id, vendor_id: g.vendor_id, receiving_book_ref: g.receiving_book_ref, created_at: g.posted_at, receivingByCode };
     });
     bulkAllocationResult = null;
 
     area.innerHTML = `
       <div class="card2 accent-bulk">
         <h3>BULK FINALIZE</h3>
-        <p class="section-note">For a rush day where stock from several deliveries got physically mixed. Tick every delivery this count covers, upload one combined Excel (Code, Size, Qty), and review the split before confirming — each delivery still gets its own approval afterward, same as normal.</p>
-        <h4>Which deliveries does this count cover?</h4>
+        <p class="section-note">For a rush day where physically recounting several already-posted deliveries got mixed together. Tick every delivery this recount covers, upload one combined Excel (Code, Size, Qty), and review the split before confirming. These deliveries already posted to the ledger — this only ever produces a reconciliation check, it never re-posts anything.</p>
+        <h4>Which posted deliveries does this recount cover?</h4>
         <div id="bulkGrnList">
           ${bulkGrns.map(g => `
             <label style="display:flex; align-items:flex-start; gap:8px; border:1px solid var(--bb-line); border-radius:9px; padding:10px 12px; margin-bottom:8px; text-transform:none; font-size:12.5px; cursor:pointer;">
@@ -714,10 +715,10 @@
     document.getElementById('bulkPreviewArea').innerHTML = `
       <div class="card2" style="background:var(--bb-bg);">
         <h3>Review before confirming</h3>
-        <p class="section-note">Any Δ here becomes a variance flag on that delivery, same as a normal single-delivery scan — nothing is written until you confirm below.</p>
+        <p class="section-note">Any Δ here becomes a variance flag on that delivery — the Ledger already posted for these and will not change.</p>
         ${grnSections}
         ${unmatchedHtml}
-        <button class="btn btn-primary btn-block" id="bulkConfirmBtn" onclick="confirmBulkFinalize()">Confirm &amp; Submit All ${ticketedGrns.length} for Approval</button>
+        <button class="btn btn-primary btn-block" id="bulkConfirmBtn" onclick="confirmBulkFinalize()">Confirm &amp; Submit ${ticketedGrns.length} Recount(s)</button>
       </div>
     `;
   }
@@ -743,14 +744,14 @@
       const grnIds = Array.from(new Set(allocations.map(a => a.grn_id)));
       const results = [];
       for(const id of grnIds){
-        const { error: e2 } = await sb.rpc('submit_grn_details', { p_grn_id: id, p_submitter_id: me.id });
+        const { error: e2 } = await sb.rpc('submit_recount', { p_grn_id: id, p_submitter_id: me.id });
         results.push({ id, ok: !e2, error: e2 ? e2.message : null });
       }
       const failed = results.filter(r => !r.ok);
       if(failed.length){
-        alert('Lines saved, but ' + failed.length + ' deliver(y/ies) failed to submit: ' + failed.map(f=>f.error).join('; ') + ' — safe to try Bulk Finalize again for those.');
+        alert('Lines saved, but ' + failed.length + ' recount(s) failed to submit: ' + failed.map(f=>f.error).join('; ') + ' — safe to try Bulk Finalize again for those.');
       } else {
-        alert('All ' + grnIds.length + ' deliveries submitted for approval.');
+        alert('All ' + grnIds.length + ' recounts submitted for reconciliation.');
       }
       bulkGrns = []; bulkAllocationResult = null;
       boySub = 'log';
@@ -771,12 +772,16 @@
       return;
     }
     pendingPhotoBlob = null;
-    const vendorOpts = refData.vendors.map(v => `<option value="${v.id}">${v.name} (${v.category})</option>`).join('');
     document.getElementById('boyFormArea').innerHTML = `
       <div class="card2 accent-log">
         <h3>LOG DELIVERY</h3>
+        <label>Category</label>
+        <select id="logCategory" onchange="onLogCategoryChange()">
+          <option value="stock">Stock</option>
+          <option value="materials">Materials</option>
+        </select>
         <label>Vendor</label>
-        <select id="logVendor" onchange="onLogVendorChange()">${vendorOpts}</select>
+        <select id="logVendor" onchange="onLogVendorChange()"></select>
         <div style="display:flex; gap:8px;">
           <div style="flex:1;"><label>Date</label><input type="date" id="logEntryDate" value="${todayStr()}"></div>
           <div style="flex:1;"><label>Bill No.</label><input type="text" id="logBillNo" placeholder="e.g. 441"></div>
@@ -789,6 +794,16 @@
         <button class="btn btn-primary btn-block" id="logDeliveryBtn" onclick="submitLogDelivery()">Log This Delivery</button>
       </div>
     `;
+    onLogCategoryChange();
+  }
+
+  function onLogCategoryChange(){
+    const cat = document.getElementById('logCategory').value;
+    const vendorsOfCat = refData.vendors.filter(v => v.category === cat);
+    const vSel = document.getElementById('logVendor');
+    vSel.innerHTML = vendorsOfCat.length
+      ? vendorsOfCat.map(v => `<option value="${v.id}">${v.name}</option>`).join('')
+      : '<option value="">No vendors of this category yet</option>';
     onLogVendorChange();
   }
 
@@ -797,18 +812,12 @@
     if(!vSel) return;
     const vendor = refData.vendors.find(v => v.id === vSel.value);
     const container = document.getElementById('logDynamicFields');
-    receivingRowCount = 0;
     if(vendor && vendor.category === 'stock'){
       container.innerHTML = `
-        <div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px; margin-top:6px;">
-          <div style="width:150px; flex-shrink:0;"><div class="dyn-field-label" style="text-align:center;">SKU</div></div>
-          <div style="width:70px; flex-shrink:0;"><div class="dyn-field-label" style="text-align:center;">Qty</div></div>
-          <div style="width:34px; flex-shrink:0;"></div>
-        </div>
-        <div id="receivingRows" oninput="updateLogDeliveryTotal()"></div>
-        <button type="button" class="btn btn-secondary btn-sm" onclick="addReceivingRow()">+ Add another SKU</button>
-        <div class="modal-total" id="logDeliveryTotal" style="margin-top:8px;">Total: 0</div>`;
-      for(let i=0; i<4; i++) addReceivingRow();
+        <label>Total Quantity</label>
+        <p class="section-note" style="margin-top:-6px;">Just the total you're handed — no need to break it down by SKU. The approver will do that from your photo, and it'll be checked against this number.</p>
+        <input type="number" inputmode="numeric" id="logTotalQty" placeholder="e.g. 100">
+      `;
     } else {
       container.innerHTML = '';
     }
@@ -915,38 +924,23 @@
     const billNo = document.getElementById('logBillNo').value.trim();
     const entryDate = document.getElementById('logEntryDate').value || todayStr();
 
-    let receivingLines = [];
+    let totalQty = null;
     if(vendor.category === 'stock'){
-      document.querySelectorAll('#receivingRows .dyn-row').forEach(row => {
-        const code = row.querySelector('.rr-code').value.trim().toUpperCase();
-        const qty = Number(row.querySelector('.rr-qty').value);
-        if(code && qty > 0) receivingLines.push({ base_item_code: code, quantity: qty });
-      });
-      if(receivingLines.length === 0){ alert('Add at least one SKU + qty'); return; }
-
-      // Every code must already be known — a boy shouldn't be able to
-      // create a brand-new product line just by typing (or mistyping)
-      // something into this box. New codes go through Admin.
-      const knownCodes = new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code));
-      const unknownCodes = Array.from(new Set(receivingLines.map(l => l.base_item_code).filter(c => !knownCodes.has(c))));
-      if(unknownCodes.length){
-        alert('Not a known SKU — check for a typo, or ask an admin to add it first if it\'s genuinely new: ' + unknownCodes.join(', '));
-        return;
-      }
+      totalQty = Number(document.getElementById('logTotalQty').value);
+      if(!totalQty || totalQty <= 0){ alert('Enter the total quantity for this delivery'); return; }
     }
     if(vendor.photo_required && !pendingPhotoBlob){ alert('A photo is required for ' + vendor.name); return; }
 
-    const grandTotal = receivingLines.reduce((s,l) => s + l.quantity, 0);
-    const rows = receivingLines.map(l => `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${l.base_item_code}</span><span class="mono">${l.quantity}</span></div></div>`).join('');
     const body = `
       <p style="font-size:12.5px; color:var(--bb-ink-muted); margin-top:0;">${vendor.name} · ${entryDate}${billNo ? ' · '+billNo : ''}</p>
-      ${rows || '<div class="empty">No stock lines (materials delivery).</div>'}
-      ${receivingLines.length ? `<div class="modal-total">Grand Total: ${grandTotal}</div>` : ''}
+      ${vendor.category === 'stock'
+        ? `<div class="modal-total">Total Quantity: ${totalQty}</div><p class="section-note">The approver will enter the SKU breakdown from your photo — this number is what it has to match.</p>`
+        : '<div class="empty">Materials delivery — go to Add Details next to record what was delivered.</div>'}
     `;
-    showConfirmModal('Check before submitting', body, () => doSubmitLogDelivery(vendor, billNo, entryDate, receivingLines));
+    showConfirmModal('Check before submitting', body, () => doSubmitLogDelivery(vendor, billNo, entryDate, totalQty));
   }
 
-  async function doSubmitLogDelivery(vendor, billNo, entryDate, receivingLines){
+  async function doSubmitLogDelivery(vendor, billNo, entryDate, totalQty){
     if(writeInFlight) return;
     writeInFlight = true;
     const btn = document.getElementById('logDeliveryBtn');
@@ -967,16 +961,25 @@
         p_vendor_id: vendor.id,
         p_receiving_book_ref: billNo,
         p_created_by: me.id,
-        p_receiving_lines: receivingLines,
         p_entry_date: entryDate,
-        p_slip_photo_path: slipPhotoPath
+        p_slip_photo_path: slipPhotoPath,
+        p_total_quantity_reported: totalQty,
+        p_receiving_lines: []
       });
 
       if(error){ alert('Could not log delivery: ' + error.message); return; }
 
-      boySub = 'detail';
-      selectedDetailGrn = data.grn_id;
-      await renderBoy();
+      if(vendor.category === 'stock'){
+        // Stock goes straight to the approval queue now — there's no
+        // "add details" step left for the boy to do here at all.
+        alert('Logged — now waiting for an approver to enter the SKU breakdown from your photo.');
+        renderLogDeliveryForm();
+      } else {
+        alert('Logged — add what was delivered under Add Details.');
+        boySub = 'detail';
+        selectedDetailGrn = data.grn_id;
+        await renderBoy();
+      }
     } catch(err) {
       alert('Something went wrong logging this delivery: ' + err.message + '. Nothing was saved — please try again.');
     } finally {
@@ -1075,18 +1078,23 @@
   }
 
   async function renderPendingList(){
-    const { data, error } = await sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false });
+    const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }] = await Promise.all([
+      sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
+    ]);
     const container = document.getElementById('pendingList');
-    if(error){ container.innerHTML = `<div class="empty">Could not load: ${error.message}</div>`; return; }
-    const pending = data || [];
+    if(e1 || e2){ container.innerHTML = `<div class="empty">Could not load: ${(e1||e2).message}</div>`; return; }
+    const pending = [...(intakeData||[]), ...(recountData||[])];
     if(pending.length === 0){ container.innerHTML = '<div class="empty">Nothing waiting.</div>'; return; }
     container.innerHTML = pending.map(g => {
-      const rejected = !!g.rejection_reason;
-      const hrsAgo = Math.floor((Date.now() - new Date(g.created_at)) / 3600000);
+      const rejected = !!g.rejection_reason && g.status === 'intake';
+      const isRecount = g.status === 'posted';
+      const refTime = isRecount ? g.posted_at : g.created_at;
+      const hrsAgo = Math.floor((Date.now() - new Date(refTime)) / 3600000);
       return `
         <div class="list-item" style="cursor:pointer; ${rejected ? 'border-color:var(--bb-rust); background:#FCF5F2;' : ''}" onclick="openAddDetails('${g.id}')">
-          <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${rejected ? 'open' : g.grn_type}">${rejected ? 'Rejected' : g.grn_type}</span></div>
-          <div class="meta">${g.receiving_book_ref || 'no bill no'} · ${fmtDate(g.created_at)} · by ${userName(g.created_by)}${!rejected && hrsAgo>=3 ? ' · ⚠ '+hrsAgo+'h uncounted' : ''}</div>
+          <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${rejected ? 'open' : g.grn_type}">${rejected ? 'Rejected' : (isRecount ? 'recount' : g.grn_type)}</span></div>
+          <div class="meta">${g.receiving_book_ref || 'no bill no'} · ${fmtDate(refTime)} · by ${userName(g.created_by)}${hrsAgo>=3 ? ' · ⚠ '+hrsAgo+'h waiting' : ''}</div>
           ${rejected ? `<div class="meta" style="color:var(--bb-rust);">Reason: ${g.rejection_reason}</div>` : ''}
         </div>`;
     }).join('');
@@ -1144,28 +1152,31 @@
   }
 
   async function renderAddDetailsForm(){
-    const { data: pending, error } = await sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false });
+    const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }] = await Promise.all([
+      sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
+    ]);
     const area = document.getElementById('boyFormArea');
-    if(error){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
-    if(!pending || pending.length === 0){ area.innerHTML = '<div class="card2 accent-detail"><h3>ADD DETAILS</h3><div class="empty">No logged deliveries waiting.</div></div>'; return; }
+    if(e1 || e2){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${(e1||e2).message}</div></div>`; return; }
+    const pending = [...(intakeData||[]), ...(recountData||[])];
+    if(pending.length === 0){ area.innerHTML = '<div class="card2 accent-detail"><h3>ADD DETAILS</h3><div class="empty">No logged deliveries waiting.</div></div>'; return; }
     if(!selectedDetailGrn || !pending.find(g => g.id === selectedDetailGrn)){ selectedDetailGrn = pending[0].id; localCountedLines = []; }
     const grn = pending.find(g => g.id === selectedDetailGrn);
+    const isRecount = grn.status === 'posted';
 
-    const opts = pending.map(g => `<option value="${g.id}" ${g.id===selectedDetailGrn?'selected':''}>${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}</option>`).join('');
+    const opts = pending.map(g => `<option value="${g.id}" ${g.id===selectedDetailGrn?'selected':''}>${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}${g.status==='posted'?' (recount)':''}</option>`).join('');
 
     let entryFields = '';
     let allowedCodes = [];
     currentGrnReceivedQty = {};
     if(grn.grn_type === 'stock'){
-      // Only the codes actually logged on THIS delivery — not every SKU
-      // that has ever existed. This is the fix for the LS119/LS278/LS279
-      // mix-up: the dropdown can no longer offer a code that was never
-      // on this delivery's Receiving Book.
+      // Only the codes actually on THIS delivery's breakdown (entered by
+      // the approver from the photo) — not every SKU that has ever existed.
       const { data: recvLines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grn.id);
       (recvLines||[]).forEach(l => { currentGrnReceivedQty[l.base_item_code] = (currentGrnReceivedQty[l.base_item_code]||0) + Number(l.quantity); });
       allowedCodes = Object.keys(currentGrnReceivedQty);
       entryFields = `
-        <label>SKU (from this delivery's Receiving Book)</label>
+        <label>SKU (from this delivery's breakdown)</label>
         <select id="countedCode">${allowedCodes.map(c => `<option value="${c}">${c}</option>`).join('')}</select>
         <label>Size</label>
         <select id="countedSize">${SIZE_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
@@ -1196,13 +1207,14 @@
         <h3>ADD DETAILS</h3>
         <label>Which delivery?</label>
         <select onchange="selectedDetailGrn=this.value; localCountedLines=[]; renderBoy();">${opts}</select>
+        ${isRecount ? '<p class="section-note">This one already posted to the ledger — this is the real physical count now, not an approval.</p>' : ''}
         ${grn.rejection_reason ? `<div class="badge open" style="display:inline-block; margin:8px 0;">Sent back: ${grn.rejection_reason}</div>` : ''}
         <h4>Entry</h4>
         ${entryFields}
         <h4>Lines so far</h4>
         ${linesHtml}
         ${grn.grn_type === 'stock' ? renderLiveVarianceTable() : ''}
-        <button class="btn btn-primary btn-block" id="submitDetailsBtn" onclick="submitForApproval()">Submit for Approval</button>
+        <button class="btn btn-primary btn-block" id="submitDetailsBtn" onclick="submitForApproval()">${isRecount ? 'Submit Physical Count' : 'Submit for Approval'}</button>
       </div>
     `;
   }
@@ -1332,19 +1344,27 @@
     const btn = document.getElementById('submitDetailsBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Submitting…'; }
     try{
+      const { data: grnRow, error: eGrn } = await sb.from('grn').select('status').eq('id', selectedDetailGrn).single();
+      if(eGrn){ alert('Could not check delivery status: ' + eGrn.message); return; }
+      const isRecount = grnRow.status === 'posted';
+
       const rows = localCountedLines.map(l => ({
         grn_id: selectedDetailGrn, material_id: l.material_id, counted_quantity: l.qty, entry_method: l.method, entered_by: me.id
       }));
       const { error: e1 } = await sb.from('grn_counted_lines').insert(rows);
       if(e1){ alert('Could not save lines: ' + e1.message); return; }
 
-      const { error: e2 } = await sb.rpc('submit_grn_details', { p_grn_id: selectedDetailGrn, p_submitter_id: me.id });
+      const rpcName = isRecount ? 'submit_recount' : 'submit_grn_details';
+      const rpcParams = isRecount
+        ? { p_grn_id: selectedDetailGrn, p_submitter_id: me.id }
+        : { p_grn_id: selectedDetailGrn, p_submitter_id: me.id };
+      const { error: e2 } = await sb.rpc(rpcName, rpcParams);
       if(e2){ alert('Lines saved, but submit failed: ' + e2.message + ' — try Submit again, your lines are safe.'); return; }
 
       selectedDetailGrn = null;
       localCountedLines = [];
       boySub = 'log';
-      alert('Submitted — now in the approval queue.');
+      alert(isRecount ? 'Physical count submitted — an approver will reconcile it against what already posted.' : 'Submitted — now in the approval queue.');
       await renderBoy();
     } catch(err) {
       alert('Something went wrong submitting these details: ' + err.message + '. Your lines may already be saved — check History before re-entering them.');
@@ -1419,28 +1439,51 @@
   async function renderApprover(){
     const el = document.getElementById('panel-approver');
     el.innerHTML = '<div class="loading">Loading...</div>';
-    const { data: queue, error } = await sb.from('grn').select('*').eq('status','submitted').order('submitted_at', { ascending:true });
-    if(error){ el.innerHTML = `<div class="card2"><div class="empty">Could not load queue: ${error.message}</div></div>`; return; }
+    const [{ data: queue, error: e1 }, { data: recountQueue, error: e2 }] = await Promise.all([
+      sb.from('grn').select('*').eq('status','submitted').order('submitted_at', { ascending:true }),
+      sb.from('grn').select('*').eq('status','posted').eq('recount_status','submitted').order('posted_at', { ascending:true }),
+    ]);
+    if(e1 || e2){ el.innerHTML = `<div class="card2"><div class="empty">Could not load queue: ${(e1||e2).message}</div></div>`; return; }
 
     el.innerHTML = `
       <div class="grid2">
         <div class="card2">
           <h3>Approval Queue</h3>
           <div id="queueList"></div>
+          ${(recountQueue||[]).length ? '<h4 style="margin-top:16px;">Awaiting Recount Reconciliation</h4><div id="recountQueueList"></div>' : ''}
         </div>
         <div id="approvalDetail"><div class="card2"><div class="empty">Select an item from the queue.</div></div></div>
       </div>
     `;
     const queueList = document.getElementById('queueList');
-    if(!queue || queue.length === 0){ queueList.innerHTML = '<div class="empty">Nothing pending.</div>'; return; }
-    queueList.innerHTML = (await Promise.all(queue.map(async g => {
-      const required = await getRequiredApprovals(g.grn_type, g.vendor_id);
-      const { count: done } = await sb.from('grn_approvals').select('*', { count:'exact', head:true }).eq('grn_id', g.id).eq('cycle', g.submission_cycle).eq('action','approved');
-      return `<div class="list-item" style="cursor:pointer;" onclick="openApprovalDetail('${g.id}')">
-        <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${g.grn_type}">${g.grn_type}</span></div>
-        <div class="meta">${g.receiving_book_ref||'no bill no'} . approvals ${done||0}/${required}</div>
-      </div>`;
-    }))).join('');
+    if(!queue || queue.length === 0){ queueList.innerHTML = '<div class="empty">Nothing pending.</div>'; }
+    else {
+      queueList.innerHTML = (await Promise.all(queue.map(async g => {
+        let statusLabel;
+        if(g.grn_type === 'stock'){
+          const { count: bc } = await sb.from('grn_receiving_lines').select('*', { count:'exact', head:true }).eq('grn_id', g.id);
+          if(!bc){ statusLabel = 'needs SKU breakdown'; }
+        }
+        if(!statusLabel){
+          const required = await getRequiredApprovals(g.grn_type, g.vendor_id);
+          const { count: done } = await sb.from('grn_approvals').select('*', { count:'exact', head:true }).eq('grn_id', g.id).eq('cycle', g.submission_cycle).eq('action','approved');
+          statusLabel = 'approvals ' + (done||0) + '/' + required;
+        }
+        return `<div class="list-item" style="cursor:pointer;" onclick="openApprovalDetail('${g.id}')">
+          <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${g.grn_type}">${g.grn_type}</span></div>
+          <div class="meta">${g.receiving_book_ref||'no bill no'} . ${statusLabel}</div>
+        </div>`;
+      }))).join('');
+    }
+
+    if((recountQueue||[]).length){
+      document.getElementById('recountQueueList').innerHTML = recountQueue.map(g => `
+        <div class="list-item" style="cursor:pointer;" onclick="openApprovalDetail('${g.id}')">
+          <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge stock">recount</span></div>
+          <div class="meta">${g.receiving_book_ref||'no bill no'} . physical count ready to reconcile</div>
+        </div>
+      `).join('');
+    }
   }
 
   async function openApprovalDetail(grnId){
@@ -1451,12 +1494,6 @@
     const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
     if(error){ el.innerHTML = `<div class="card2"><div class="empty">${error.message}</div></div>`; return; }
 
-    const required = await getRequiredApprovals(grn.grn_type, grn.vendor_id);
-    const { count: done } = await sb.from('grn_approvals').select('*', { count:'exact', head:true }).eq('grn_id', grnId).eq('cycle', grn.submission_cycle).eq('action','approved');
-    const nextStep = (done||0) + 1;
-    const isFinal = nextStep >= required;
-    const sameUser = me.id === grn.created_by || me.id === grn.details_entered_by;
-
     let photoHtml = '<div class="empty">No photo attached.</div>';
     if(grn.slip_photo_url){
       const { data: signed, error: eSign } = await sb.storage.from('receiving-slips').createSignedUrl(grn.slip_photo_url, 3600);
@@ -1465,42 +1502,145 @@
         : `<img src="${signed.signedUrl}" style="width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1px solid var(--bb-line); margin-bottom:12px; background:#000;">`;
     }
 
-    let varianceHtml = '';
+    if(grn.status === 'posted' && grn.recount_status === 'submitted'){
+      await renderReconciliationDetail(grn, photoHtml);
+      return;
+    }
+
+    if(grn.grn_type === 'stock' && grn.status === 'submitted'){
+      const { count: breakdownCount } = await sb.from('grn_receiving_lines').select('*', { count:'exact', head:true }).eq('grn_id', grnId);
+      if(!breakdownCount){
+        renderBreakdownEntryForm(grn, photoHtml);
+        return;
+      }
+    }
+
+    await renderNormalApprovalDetail(grn, photoHtml);
+  }
+
+  // ---------- MODE A: approver enters the SKU breakdown from the photo ----------
+  let breakdownRowCount = 0;
+
+  function renderBreakdownEntryForm(grn, photoHtml){
+    breakdownRowCount = 0;
+    document.getElementById('approvalDetail').innerHTML = `
+      <div class="card2">
+        <h3>${vendorName(grn.vendor_id)}</h3>
+        <div style="font-size:11.5px; color:var(--bb-ink-muted); margin-bottom:10px;">${grn.receiving_book_ref||'no bill no'} . stock . logged by ${userName(grn.created_by)}</div>
+        ${photoHtml}
+        <div class="list-item" style="cursor:default;">Boy reported total: <b>${grn.total_quantity_reported}</b> — enter the SKU breakdown from the photo above. It must add up to this number exactly.</div>
+        <h4>SKU Breakdown</h4>
+        <div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px;">
+          <div style="width:150px; flex-shrink:0;"><div class="dyn-field-label" style="text-align:center;">SKU</div></div>
+          <div style="width:70px; flex-shrink:0;"><div class="dyn-field-label" style="text-align:center;">Qty</div></div>
+          <div style="width:34px; flex-shrink:0;"></div>
+        </div>
+        <div id="breakdownRows"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="addBreakdownRow()">+ Add another SKU</button>
+        <div class="modal-total" id="breakdownTotal" data-target="${grn.total_quantity_reported}" style="margin-top:8px;">Total: 0 / ${grn.total_quantity_reported}</div>
+        <button class="btn btn-primary btn-block" id="saveBreakdownBtn" style="margin-top:10px;" onclick="saveReceivingBreakdown('${grn.id}', ${grn.total_quantity_reported})">Save Breakdown</button>
+      </div>
+    `;
+    for(let i=0; i<4; i++) addBreakdownRow();
+  }
+
+  function addBreakdownRow(){
+    breakdownRowCount++;
+    const id = 'brow' + breakdownRowCount;
+    const div = document.createElement('div');
+    div.className = 'dyn-row'; div.id = id;
+    div.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:5px;">
+        <div style="position:relative; width:150px; flex-shrink:0;">
+          <input type="text" inputmode="numeric" class="br-code" style="margin-bottom:0; width:100%; text-align:center;"
+            oninput="skuInputHandler(this)" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
+          <div class="sku-dropdown" style="display:none;"></div>
+        </div>
+        <input type="number" inputmode="numeric" class="br-qty rr-qty" style="width:70px; flex-shrink:0; margin-bottom:0; text-align:center;" oninput="updateBreakdownTotal()">
+        <button type="button" class="icon-btn-delete" onclick="removeBreakdownRow('${id}')">✕</button>
+      </div>
+    `;
+    document.getElementById('breakdownRows').appendChild(div);
+  }
+
+  function removeBreakdownRow(id){
+    const row = document.getElementById(id);
+    if(!row) return;
+    const code = row.querySelector('.br-code').value.trim();
+    const qty = row.querySelector('.br-qty').value.trim();
+    if((code || qty) && !confirm('This row has something entered — remove it anyway?')) return;
+    row.remove();
+    updateBreakdownTotal();
+  }
+
+  function updateBreakdownTotal(){
+    let total = 0;
+    document.querySelectorAll('#breakdownRows .br-qty').forEach(inp => { const v = Number(inp.value); if(v>0) total += v; });
+    const el = document.getElementById('breakdownTotal');
+    if(el) el.textContent = `Total: ${total} / ${el.dataset.target}`;
+  }
+
+  async function saveReceivingBreakdown(grnId, targetTotal){
+    const lines = [];
+    document.querySelectorAll('#breakdownRows .dyn-row').forEach(row => {
+      const code = row.querySelector('.br-code').value.trim().toUpperCase();
+      const qty = Number(row.querySelector('.br-qty').value);
+      if(code && qty > 0) lines.push({ base_item_code: code, quantity: qty });
+    });
+    if(lines.length === 0){ alert('Add at least one SKU + qty'); return; }
+
+    const knownCodes = new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code));
+    const unknownCodes = Array.from(new Set(lines.map(l => l.base_item_code).filter(c => !knownCodes.has(c))));
+    if(unknownCodes.length){ alert('Not a known SKU — check for a typo: ' + unknownCodes.join(', ')); return; }
+
+    const sum = lines.reduce((s,l) => s + l.quantity, 0);
+    if(sum !== targetTotal){ alert('Your breakdown totals ' + sum + ', but the boy reported ' + targetTotal + '. These must match exactly before saving.'); return; }
+
+    if(writeInFlight) return;
+    writeInFlight = true;
+    const btn = document.getElementById('saveBreakdownBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try{
+      const { error } = await sb.rpc('submit_receiving_breakdown', { p_grn_id: grnId, p_submitter_id: me.id, p_lines: lines });
+      if(error){ alert('Could not save breakdown: ' + error.message); return; }
+      alert('Breakdown saved — you can now approve this delivery.');
+      await openApprovalDetail(grnId);
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+      if(btn){ btn.disabled = false; btn.textContent = 'Save Breakdown'; }
+    }
+  }
+
+  // ---------- MODE B: normal approve/reject (breakdown already entered, or materials) ----------
+  async function renderNormalApprovalDetail(grn, photoHtml){
+    const grnId = grn.id;
+    const required = await getRequiredApprovals(grn.grn_type, grn.vendor_id);
+    const { count: done } = await sb.from('grn_approvals').select('*', { count:'exact', head:true }).eq('grn_id', grnId).eq('cycle', grn.submission_cycle).eq('action','approved');
+    const nextStep = (done||0) + 1;
+    const isFinal = nextStep >= required;
+    const sameUser = me.id === grn.created_by || me.id === grn.details_entered_by;
+
+    let breakdownHtml = '';
     if(grn.grn_type === 'stock'){
-      const { data: rows } = await sb.from('grn_receiving_vs_scanned_v').select('*').eq('grn_id', grnId);
-      const grandTotalVariance = (rows||[]).reduce((s,r) => s + Number(r.variance), 0);
-      const possibleSwap = grandTotalVariance === 0 && (rows||[]).some(r => Number(r.variance) !== 0);
-      varianceHtml = `
-        <h4>Receiving Book vs. Scan</h4>
-        <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Scanned</th><th>D</th><th>Reason</th></tr>
-        ${(rows||[]).map(r => `
-          <tr><td>${r.base_item_code}</td><td>${r.receiving_total}</td><td>${r.counted_total}</td>
-            <td class="variance ${Number(r.variance)===0?'zero':'nonzero'}">${r.variance>0?'+':''}${r.variance}</td>
-            <td>${Number(r.variance)!==0 ? `<select data-reason-key="${r.base_item_code}" style="margin-bottom:0; padding:5px;">
-                <option value="">-- Select --</option>
-                <option value="miscount">Miscount</option>
-                <option value="picked_before_count">Picked before count</option>
-                <option value="wrong_labeling">Code mix-up</option>
-                <option value="other">Other</option>
-              </select>` : '-'}</td></tr>`).join('')}
-        </table></div>
-        ${possibleSwap ? '<p style="color:var(--bb-brass); font-size:11px; font-weight:600;">Totals match overall but individual codes do not match - looks like a code mix-up, not a shortage.</p>' : ''}
-      `;
+      const { data: lines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grnId);
+      breakdownHtml = `<h4>SKU Breakdown (from photo)</h4><div class="table-scroll"><table><tr><th>Code</th><th>Qty</th></tr>${(lines||[]).map(l=>`<tr><td>${l.base_item_code}</td><td>${l.quantity}</td></tr>`).join('')}</table></div>`;
     } else {
       const { data: lines } = await sb.from('grn_counted_lines').select('material_id, counted_quantity').eq('grn_id', grnId);
       const totals = {};
       (lines||[]).forEach(l => { totals[l.material_id] = (totals[l.material_id]||0) + Number(l.counted_quantity); });
-      varianceHtml = `<div class="table-scroll"><table><tr><th>Item</th><th>Qty</th></tr>${Object.keys(totals).map(mid => `<tr><td>${materialName(mid)}</td><td>${totals[mid]}</td></tr>`).join('')}</table></div>`;
+      breakdownHtml = `<div class="table-scroll"><table><tr><th>Item</th><th>Qty</th></tr>${Object.keys(totals).map(mid => `<tr><td>${materialName(mid)}</td><td>${totals[mid]}</td></tr>`).join('')}</table></div>`;
     }
 
     document.getElementById('approvalDetail').innerHTML = `
       <div class="card2">
         <h3>${vendorName(grn.vendor_id)}</h3>
         <div style="font-size:11.5px; color:var(--bb-ink-muted); margin-bottom:10px;">${grn.receiving_book_ref||'no bill no'} . ${grn.grn_type} . logged by ${userName(grn.created_by)}</div>
-        ${sameUser ? '<div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">You logged or detailed this entry - a teammate needs to approve it, not you.</div>' : ''}
+        ${sameUser ? '<div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">You logged or physically counted this entry - a teammate needs to approve it, not you.</div>' : ''}
         <div class="list-item" style="cursor:default;">Approval ${nextStep} of ${required}${isFinal ? ' - this click posts to the ledger' : ' - one more approval needed after this'}</div>
         ${photoHtml}
-        ${varianceHtml}
+        ${breakdownHtml}
         <div style="display:flex; gap:8px; margin-top:12px;">
           <button class="btn" style="background:transparent; border:1.5px solid var(--bb-rust); color:var(--bb-rust);" onclick="rejectGrnLive('${grnId}')">Reject</button>
           <button class="btn" style="background:var(--bb-sage); color:#fff;" ${sameUser?'disabled style="opacity:0.5;"':''} id="approveBtn" onclick="approveGrnLive('${grnId}')">${isFinal ? 'Approve and Post to Ledger' : 'Record Approval '+nextStep+' of '+required}</button>
@@ -1515,20 +1655,72 @@
     const btn = document.getElementById('approveBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Working...'; }
     try{
-      const reasonSelects = document.querySelectorAll('[data-reason-key]');
-      const reasons = {};
-      let missing = false;
-      reasonSelects.forEach(sel => {
-        if(!sel.value){ missing = true; }
-        reasons[sel.dataset.reasonKey] = sel.value;
-      });
-      if(missing){ alert('Pick a reason for each flagged code first'); return; }
-
-      const { data, error } = await sb.rpc('approve_grn', { p_grn_id: grnId, p_approver_id: me.id, p_reasons: reasons });
+      const { data, error } = await sb.rpc('approve_grn', { p_grn_id: grnId, p_approver_id: me.id, p_reasons: {} });
       if(error){ alert('Could not approve: ' + error.message); return; }
       alert(data.status === 'posted' ? 'Posted to ledger.' : 'Approval recorded (' + data.approvals_done + '/' + data.approvals_required + ').');
       selectedApprovalGrn = null;
       await renderApprover();
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+    }
+  }
+
+  // ---------- MODE C: reconciling the later physical recount against what already posted ----------
+  async function renderReconciliationDetail(grn, photoHtml){
+    const grnId = grn.id;
+    const { data: rows } = await sb.from('grn_receiving_vs_scanned_v').select('*').eq('grn_id', grnId);
+    const sameUser = me.id === grn.details_entered_by;
+
+    const varianceHtml = `
+      <h4>Posted Book vs. Physical Recount</h4>
+      <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Recounted</th><th>Δ</th><th>Reason</th></tr>
+      ${(rows||[]).map(r => `
+        <tr><td>${r.base_item_code}</td><td>${r.receiving_total}</td><td>${r.counted_total}</td>
+          <td class="variance ${Number(r.variance)===0?'zero':'nonzero'}">${r.variance>0?'+':''}${r.variance}</td>
+          <td>${Number(r.variance)!==0 ? `<select data-reason-key="${r.base_item_code}" style="margin-bottom:0; padding:5px;">
+              <option value="">-- Select --</option>
+              <option value="miscount">Miscount</option>
+              <option value="picked_before_count">Picked before count</option>
+              <option value="wrong_labeling">Code mix-up</option>
+              <option value="other">Other</option>
+            </select>` : '-'}</td></tr>`).join('')}
+      </table></div>
+    `;
+
+    document.getElementById('approvalDetail').innerHTML = `
+      <div class="card2">
+        <h3>${vendorName(grn.vendor_id)} — Reconciliation</h3>
+        <div style="font-size:11.5px; color:var(--bb-ink-muted); margin-bottom:10px;">${grn.receiving_book_ref||'no bill no'} . already posted . recounted by ${userName(grn.details_entered_by)}</div>
+        ${sameUser ? '<div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">You did the physical recount — a teammate needs to reconcile it, not you.</div>' : ''}
+        <div class="list-item" style="cursor:default;">This only ever creates variance flags for a mismatch — the Ledger is already posted and will not change here.</div>
+        ${photoHtml}
+        ${varianceHtml}
+        <button class="btn btn-primary btn-block" ${sameUser?'disabled style="opacity:0.5;"':''} id="reconcileBtn" onclick="reconcileRecountLive('${grnId}')" style="margin-top:12px;">Reconcile</button>
+      </div>
+    `;
+  }
+
+  async function reconcileRecountLive(grnId){
+    if(writeInFlight) return;
+    writeInFlight = true;
+    const btn = document.getElementById('reconcileBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Working...'; }
+    try{
+      const reasonSelects = document.querySelectorAll('[data-reason-key]');
+      const reasons = {};
+      let missing = false;
+      reasonSelects.forEach(sel => { if(!sel.value){ missing = true; } reasons[sel.dataset.reasonKey] = sel.value; });
+      if(missing){ alert('Pick a reason for each flagged code first'); return; }
+
+      const { data, error } = await sb.rpc('reconcile_recount', { p_grn_id: grnId, p_reconciler_id: me.id, p_reasons: reasons });
+      if(error){ alert('Could not reconcile: ' + error.message); return; }
+      alert(data.flags_raised > 0 ? ('Reconciled — ' + data.flags_raised + ' variance flag(s) raised.') : 'Reconciled — clean, no differences.');
+      selectedApprovalGrn = null;
+      await renderApprover();
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
     } finally {
       writeInFlight = false;
     }
@@ -1542,9 +1734,11 @@
     try{
       const { error } = await sb.rpc('reject_grn', { p_grn_id: grnId, p_actor_id: me.id, p_reason: reason });
       if(error){ alert('Could not reject: ' + error.message); return; }
-      alert('Sent back to the warehouse boy.');
+      alert('Sent back for the SKU breakdown to be redone.');
       selectedApprovalGrn = null;
       await renderApprover();
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
     } finally {
       writeInFlight = false;
     }
