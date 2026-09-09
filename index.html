@@ -225,6 +225,20 @@
       return v.toString(16);
     });
   }
+  // A calm, one-word confirmation instead of a browser alert box that
+  // reads like an error to anyone not expecting it.
+  function showInlineSuccess(then){
+    const area = document.getElementById('boyFormArea');
+    if(area){
+      area.innerHTML = `
+        <div class="card2" style="text-align:center; padding:34px 20px;">
+          <div style="font-size:38px; color:var(--bb-sage); line-height:1;">✓</div>
+          <div style="font-size:15px; font-weight:700; color:var(--bb-sage); margin-top:8px;">Submitted</div>
+        </div>
+      `;
+    }
+    setTimeout(then, 1300);
+  }
   function showConfirmModal(title, bodyHtml, onConfirm, confirmLabel){
     document.getElementById('modalTitle').textContent = title;
     document.getElementById('modalBody').innerHTML = bodyHtml;
@@ -784,7 +798,7 @@
         <select id="logVendor" onchange="onLogVendorChange()"></select>
         <div style="display:flex; gap:8px;">
           <div style="flex:1;"><label>Date</label><input type="date" id="logEntryDate" value="${todayStr()}"></div>
-          <div style="flex:1;"><label>Bill No.</label><input type="text" id="logBillNo" placeholder="e.g. 441"></div>
+          <div style="flex:1;"><label>Bill No.</label><input type="text" inputmode="numeric" id="logBillNo" placeholder="e.g. 441"></div>
         </div>
         <div id="logDynamicFields"></div>
         <label>Photo of the signed slip / Receiving Book page</label>
@@ -972,13 +986,11 @@
       if(vendor.category === 'stock'){
         // Stock goes straight to the approval queue now — there's no
         // "add details" step left for the boy to do here at all.
-        alert('Logged — now waiting for an approver to enter the SKU breakdown from your photo.');
-        renderLogDeliveryForm();
+        showInlineSuccess(() => renderLogDeliveryForm());
       } else {
-        alert('Logged — add what was delivered under Add Details.');
         boySub = 'detail';
         selectedDetailGrn = data.grn_id;
-        await renderBoy();
+        showInlineSuccess(() => renderBoy());
       }
     } catch(err) {
       alert('Something went wrong logging this delivery: ' + err.message + '. Nothing was saved — please try again.');
