@@ -227,17 +227,24 @@
   }
   // A calm, one-word confirmation instead of a browser alert box that
   // reads like an error to anyone not expecting it.
+  let inlineSuccessCallback = null;
   function showInlineSuccess(then){
+    inlineSuccessCallback = then;
     const area = document.getElementById('boyFormArea');
     if(area){
       area.innerHTML = `
         <div class="card2" style="text-align:center; padding:34px 20px;">
           <div style="font-size:38px; color:var(--bb-sage); line-height:1;">✓</div>
-          <div style="font-size:15px; font-weight:700; color:var(--bb-sage); margin-top:8px;">Submitted</div>
+          <div style="font-size:15px; font-weight:700; color:var(--bb-sage); margin-top:8px; margin-bottom:20px;">Submitted</div>
+          <button class="btn btn-primary" onclick="dismissInlineSuccess()">Continue</button>
         </div>
       `;
     }
-    setTimeout(then, 1300);
+  }
+  function dismissInlineSuccess(){
+    const cb = inlineSuccessCallback;
+    inlineSuccessCallback = null;
+    if(cb) cb();
   }
   function showConfirmModal(title, bodyHtml, onConfirm, confirmLabel){
     document.getElementById('modalTitle').textContent = title;
