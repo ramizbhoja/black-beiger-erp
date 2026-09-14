@@ -655,7 +655,7 @@
 
   async function renderBoy(){
     const el = document.getElementById('panel-boy');
-    const canBulk = me.role === 'owner' || me.role === 'admin';
+    const canBulk = me.role === 'owner' || me.role === 'admin' || me.role === 'warehouse_boy';
     el.innerHTML = `
       <div class="subtabs">
         <button class="subtab ${boySub==='log'?'active':''}" onclick="setBoySub('log')">1. Log Delivery</button>
