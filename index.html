@@ -1449,6 +1449,32 @@
   // Step 3: match the tallied SKUs against that specific delivery's known
   // codes (its own breakdown if it has one yet, otherwise the full known
   // catalog), then show the exact SKU+size summary before anything is added.
+  // Simple edit-distance check — used only to suggest an obvious one-digit
+  // fix, never to apply anything automatically.
+  function levenshteinDistance(a, b){
+    const m = a.length, n = b.length;
+    const dp = Array.from({length: m+1}, () => new Array(n+1).fill(0));
+    for(let i=0; i<=m; i++) dp[i][0] = i;
+    for(let j=0; j<=n; j++) dp[0][j] = j;
+    for(let i=1; i<=m; i++){
+      for(let j=1; j<=n; j++){
+        dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+      }
+    }
+    return dp[m][n];
+  }
+  function findClosestCode(code, validCodes){
+    let best = null, bestDist = Infinity;
+    validCodes.forEach(c => {
+      const d = levenshteinDistance(code, c);
+      if(d < bestDist){ bestDist = d; best = c; }
+    });
+    return (best && bestDist === 1 && best !== code) ? best : null;
+  }
+
+  let currentExcelValidCodes = [];
+  let pendingExcelCorrections = {};
+
   async function confirmExcelVendorPick(){
     const grnId = document.getElementById('excelVendorPick').value;
     const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
@@ -1459,6 +1485,8 @@
     const validCodes = breakdownCodes.length
       ? breakdownCodes
       : Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)));
+    currentExcelValidCodes = validCodes;
+    pendingExcelCorrections = {};
 
     const matched = {};
     const unmatched = [];
@@ -1466,12 +1494,12 @@
       const m = sku.match(/^(.+)-(\d+)$/);
       let code = m[1], size = m[2];
       if(!validCodes.includes(code) && validCodes.includes('LS'+code)) code = 'LS'+code;
-      if(!validCodes.includes(code)){ unmatched.push({ sku, qty }); return; }
+      if(!validCodes.includes(code)){ unmatched.push({ sku, qty, code, size }); return; }
       matched[code+'-'+size] = { code, size, qty };
     });
 
-    if(Object.keys(matched).length === 0){
-      alert('None of the SKUs in this file matched a known code for this delivery.');
+    if(Object.keys(matched).length === 0 && unmatched.length === 0){
+      alert('No valid SKU rows found in the file.');
       pendingExcelTally = null;
       return;
     }
@@ -1480,9 +1508,24 @@
       `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${sku}</span><span class="mono">${qty}</span></div></div>`
     ).join('');
     const grandTotal = Object.values(matched).reduce((s,{qty})=>s+qty, 0);
+
+    const unmatchedRows = unmatched.map((u, idx) => {
+      const suggestion = findClosestCode(u.code, validCodes);
+      return `
+        <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">
+          <div class="top"><span>Read as: ${u.sku}</span><span class="mono">${u.qty}</span></div>
+          <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+            <input type="text" class="unmatched-fix" data-idx="${idx}" data-size="${u.size}" data-qty="${u.qty}" value="${u.code}"
+              oninput="validateUnmatchedFix(this)" style="flex:1; margin-bottom:0; text-transform:uppercase;">
+            <span class="fix-status" id="fix-status-${idx}" style="font-size:16px; width:22px; text-align:center; color:var(--bb-rust);">✕</span>
+          </div>
+          ${suggestion ? `<button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="applySuggestedFix(this, ${idx}, '${suggestion}')">Did you mean ${suggestion}? Use this</button>` : ''}
+        </div>
+      `;
+    }).join('');
     const unmatchedHtml = unmatched.length ? `
-      <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">Not matched — skipped:</p>
-      <ul style="font-size:12.5px; color:var(--bb-rust);">${unmatched.map(u=>`<li>${u.sku} × ${u.qty}</li>`).join('')}</ul>
+      <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">Not matched — correct here if this is just a typo, or leave as-is to skip it:</p>
+      ${unmatchedRows}
     ` : '';
 
     pendingExcelMatch = { grnId, matched };
@@ -1493,7 +1536,30 @@
     `, finalizeExcelImport);
   }
 
-  // Step 4: only now does anything actually get added to the lines list.
+  // Runs on every keystroke, since the modal clears its own content the
+  // instant Confirm is tapped — corrections have to be tracked live, not
+  // read from the DOM after the fact.
+  function validateUnmatchedFix(input){
+    const idx = input.dataset.idx;
+    const code = input.value.trim().toUpperCase();
+    const statusEl = document.getElementById('fix-status-' + idx);
+    const isValid = currentExcelValidCodes.includes(code);
+    input.style.borderColor = isValid ? 'var(--bb-sage)' : 'var(--bb-rust)';
+    input.style.background = isValid ? '#F0F7F1' : '#fff';
+    if(statusEl){ statusEl.textContent = isValid ? '✓' : '✕'; statusEl.style.color = isValid ? 'var(--bb-sage)' : 'var(--bb-rust)'; }
+    pendingExcelCorrections[idx] = isValid ? { code, size: input.dataset.size, qty: Number(input.dataset.qty) } : null;
+  }
+  function applySuggestedFix(button, idx, suggestedCode){
+    const row = button.closest('.list-item');
+    const input = row.querySelector('.unmatched-fix');
+    input.value = suggestedCode;
+    validateUnmatchedFix(input);
+    button.remove();
+  }
+
+  // Step 4: only now does anything actually get added to the lines list —
+  // the originally-matched entries, plus any correction that was typed in
+  // and turned valid. Anything still red is skipped, exactly as chosen.
   async function finalizeExcelImport(){
     if(!pendingExcelMatch) return;
     const { grnId, matched } = pendingExcelMatch;
@@ -1502,7 +1568,11 @@
       localCountedLines = [];
       let added = 0;
       const errors = [];
-      for(const { code, size, qty } of Object.values(matched)){
+      const allEntries = [
+        ...Object.values(matched),
+        ...Object.values(pendingExcelCorrections).filter(c => c)
+      ];
+      for(const { code, size, qty } of allEntries){
         try{
           const variantId = await getOrCreateVariant(code, size);
           localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: code+'-'+size });
@@ -1516,6 +1586,7 @@
     } finally {
       pendingExcelTally = null;
       pendingExcelMatch = null;
+      pendingExcelCorrections = {};
     }
   }
 
