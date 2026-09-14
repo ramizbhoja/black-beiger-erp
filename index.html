@@ -1286,42 +1286,45 @@
     let entryFields = '';
     let allowedCodes = [];
     currentGrnReceivedQty = {};
-    if(isEarly){
-      // No breakdown exists yet to constrain against — free-text SKU
-      // against the whole known catalog, same style as the approver's
-      // own breakdown entry.
-      entryFields = `
-        <label>SKU (not yet broken down by the approver — pick from the full catalog)</label>
-        <div style="position:relative;">
-          <input type="text" inputmode="numeric" id="countedCodeText" style="margin-bottom:0;"
-            oninput="skuInputHandler(this)" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
-          <div class="sku-dropdown" style="display:none;"></div>
-        </div>
-        <label>Size</label>
-        <select id="countedSize">${SIZE_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
-        <label>Qty</label>
-        <input type="number" id="countedQty">
-        <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('stock', true)">+ Add line</button>
-        <h4>Or upload an Excel</h4>
-        <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(this)">
-      `;
-    } else if(grn.grn_type === 'stock'){
-      // Only the codes actually on THIS delivery's breakdown (entered by
-      // the approver from the photo) — not every SKU that has ever existed.
+    if(grn.grn_type === 'stock'){
+      // Whether to show the constrained dropdown vs. a free-text catalog
+      // picker depends on whether a breakdown genuinely exists yet, not
+      // on whether it's been fully approved — the boy can (and should)
+      // count against an already-entered breakdown even before the
+      // remaining approval step(s) happen.
       const { data: recvLines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grn.id);
       (recvLines||[]).forEach(l => { currentGrnReceivedQty[l.base_item_code] = (currentGrnReceivedQty[l.base_item_code]||0) + Number(l.quantity); });
       allowedCodes = Object.keys(currentGrnReceivedQty);
-      entryFields = `
-        <label>SKU (from this delivery's breakdown)</label>
-        <select id="countedCode">${allowedCodes.map(c => `<option value="${c}">${c}</option>`).join('')}</select>
-        <label>Size</label>
-        <select id="countedSize">${SIZE_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
-        <label>Qty</label>
-        <input type="number" id="countedQty">
-        <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('stock')">+ Add line</button>
-        <h4>Or upload an Excel</h4>
-        <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(this, ${JSON.stringify(allowedCodes)})">
-      `;
+
+      if(allowedCodes.length === 0){
+        entryFields = `
+          <label>SKU (no breakdown entered yet — pick from the full catalog)</label>
+          <div style="position:relative;">
+            <input type="text" inputmode="numeric" id="countedCodeText" style="margin-bottom:0;"
+              oninput="skuInputHandler(this)" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
+            <div class="sku-dropdown" style="display:none;"></div>
+          </div>
+          <label>Size</label>
+          <select id="countedSize">${SIZE_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
+          <label>Qty</label>
+          <input type="number" id="countedQty">
+          <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('stock', true)">+ Add line</button>
+          <h4>Or upload an Excel</h4>
+          <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(this)">
+        `;
+      } else {
+        entryFields = `
+          <label>SKU (from this delivery's breakdown)</label>
+          <select id="countedCode">${allowedCodes.map(c => `<option value="${c}">${c}</option>`).join('')}</select>
+          <label>Size</label>
+          <select id="countedSize">${SIZE_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
+          <label>Qty</label>
+          <input type="number" id="countedQty">
+          <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('stock')">+ Add line</button>
+          <h4>Or upload an Excel</h4>
+          <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(this, ${JSON.stringify(allowedCodes)})">
+        `;
+      }
     } else {
       const types = refData.materials.filter(m => m.category === 'materials');
       entryFields = `
@@ -1344,7 +1347,7 @@
         <label>Which delivery?</label>
         <select onchange="selectedDetailGrn=this.value; localCountedLines=[]; renderBoy();">${opts}</select>
         ${isRecount ? '<p class="section-note">This one already posted to the ledger — this is the real physical count now, not an approval.</p>' : ''}
-        ${isEarly ? '<p class="section-note">Counting this before the approver has done the breakdown — that\u2019s fine, it\u2019ll be checked automatically once it\u2019s approved.</p>' : ''}
+        ${isEarly ? '<p class="section-note">Counting this before approval is finished — that\u2019s fine, it\u2019ll be checked automatically once it\u2019s approved and posted.</p>' : ''}
         ${grn.rejection_reason ? `<div class="badge open" style="display:inline-block; margin:8px 0;">Sent back: ${grn.rejection_reason}</div>` : ''}
         <h4>Entry</h4>
         ${entryFields}
