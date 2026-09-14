@@ -1168,23 +1168,26 @@
   }
 
   async function renderPendingList(){
-    const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }] = await Promise.all([
+    const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }, { data: earlyData, error: e3 }] = await Promise.all([
       sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false }),
       sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').order('created_at', { ascending:false }),
     ]);
     const container = document.getElementById('pendingList');
-    if(e1 || e2){ container.innerHTML = `<div class="empty">Could not load: ${(e1||e2).message}</div>`; return; }
-    const pending = [...(intakeData||[]), ...(recountData||[])];
+    if(e1 || e2 || e3){ container.innerHTML = `<div class="empty">Could not load: ${(e1||e2||e3).message}</div>`; return; }
+    const pending = [...(intakeData||[]), ...(recountData||[]), ...(earlyData||[])];
 
     container.innerHTML = pending.length === 0 ? '<div class="empty">Nothing waiting.</div>' : pending.map(g => {
       const rejected = !!g.rejection_reason && g.status === 'intake';
       const isRecount = g.status === 'posted';
+      const isEarly = g.status === 'submitted' && g.grn_type === 'stock';
       const refTime = isRecount ? g.posted_at : g.created_at;
       const hrsAgo = Math.floor((Date.now() - new Date(refTime)) / 3600000);
+      const badgeLabel = rejected ? 'Rejected' : (isRecount ? 'recount' : (isEarly ? 'count early' : g.grn_type));
       return `
         <div class="list-item" style="cursor:pointer; ${rejected ? 'border-color:var(--bb-rust); background:#FCF5F2;' : ''}" onclick="openAddDetails('${g.id}')">
-          <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${rejected ? 'open' : g.grn_type}">${rejected ? 'Rejected' : (isRecount ? 'recount' : g.grn_type)}</span></div>
-          <div class="meta">${g.receiving_book_ref || 'no bill no'} · ${fmtDate(refTime)} · by ${userName(g.created_by)}${hrsAgo>=3 ? ' · ⚠ '+hrsAgo+'h waiting' : ''}</div>
+          <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${rejected ? 'open' : g.grn_type}">${badgeLabel}</span></div>
+          <div class="meta">${g.receiving_book_ref || 'no bill no'}${isEarly ? ' · not yet approved — counting now is optional' : ''} · ${fmtDate(refTime)} · by ${userName(g.created_by)}${!isEarly && hrsAgo>=3 ? ' · ⚠ '+hrsAgo+'h waiting' : ''}</div>
           ${rejected ? `<div class="meta" style="color:var(--bb-rust);">Reason: ${g.rejection_reason}</div>` : ''}
         </div>`;
     }).join('');
@@ -1242,24 +1245,43 @@
   }
 
   async function renderAddDetailsForm(){
-    const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }] = await Promise.all([
+    const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }, { data: earlyData, error: e4 }] = await Promise.all([
       sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false }),
       sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').order('created_at', { ascending:false }),
     ]);
     const area = document.getElementById('boyFormArea');
-    if(e1 || e2){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${(e1||e2).message}</div></div>`; return; }
-    const pending = [...(intakeData||[]), ...(recountData||[])];
+    if(e1 || e2 || e4){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${(e1||e2||e4).message}</div></div>`; return; }
+    const pending = [...(intakeData||[]), ...(recountData||[]), ...(earlyData||[])];
     if(pending.length === 0){ area.innerHTML = '<div class="card2 accent-detail"><h3>ADD DETAILS</h3><div class="empty">No logged deliveries waiting.</div></div>'; return; }
     if(!selectedDetailGrn || !pending.find(g => g.id === selectedDetailGrn)){ selectedDetailGrn = pending[0].id; localCountedLines = []; }
     const grn = pending.find(g => g.id === selectedDetailGrn);
     const isRecount = grn.status === 'posted';
+    const isEarly = grn.status === 'submitted' && grn.grn_type === 'stock';
 
-    const opts = pending.map(g => `<option value="${g.id}" ${g.id===selectedDetailGrn?'selected':''}>${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}${g.status==='posted'?' (recount)':''}</option>`).join('');
+    const opts = pending.map(g => `<option value="${g.id}" ${g.id===selectedDetailGrn?'selected':''}>${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}${g.status==='posted'?' (recount)':(g.status==='submitted' && g.grn_type==='stock'?' (count early)':'')}</option>`).join('');
 
     let entryFields = '';
     let allowedCodes = [];
     currentGrnReceivedQty = {};
-    if(grn.grn_type === 'stock'){
+    if(isEarly){
+      // No breakdown exists yet to constrain against — free-text SKU
+      // against the whole known catalog, same style as the approver's
+      // own breakdown entry.
+      entryFields = `
+        <label>SKU (not yet broken down by the approver — pick from the full catalog)</label>
+        <div style="position:relative;">
+          <input type="text" inputmode="numeric" id="countedCodeText" style="margin-bottom:0;"
+            oninput="skuInputHandler(this)" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
+          <div class="sku-dropdown" style="display:none;"></div>
+        </div>
+        <label>Size</label>
+        <select id="countedSize">${SIZE_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
+        <label>Qty</label>
+        <input type="number" id="countedQty">
+        <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('stock', true)">+ Add line</button>
+      `;
+    } else if(grn.grn_type === 'stock'){
       // Only the codes actually on THIS delivery's breakdown (entered by
       // the approver from the photo) — not every SKU that has ever existed.
       const { data: recvLines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grn.id);
@@ -1298,6 +1320,7 @@
         <label>Which delivery?</label>
         <select onchange="selectedDetailGrn=this.value; localCountedLines=[]; renderBoy();">${opts}</select>
         ${isRecount ? '<p class="section-note">This one already posted to the ledger — this is the real physical count now, not an approval.</p>' : ''}
+        ${isEarly ? '<p class="section-note">Counting this before the approver has done the breakdown — that\u2019s fine, it\u2019ll be checked automatically once it\u2019s approved.</p>' : ''}
         ${grn.rejection_reason ? `<div class="badge open" style="display:inline-block; margin:8px 0;">Sent back: ${grn.rejection_reason}</div>` : ''}
         <h4>Entry</h4>
         ${entryFields}
@@ -1309,11 +1332,19 @@
     `;
   }
 
-  async function addLocalCountedLine(kind){
+  async function addLocalCountedLine(kind, isEarly){
     const qty = Number(document.getElementById('countedQty').value);
     if(!qty || qty <= 0){ alert('Enter a quantity'); return; }
     if(kind === 'stock'){
-      const code = document.getElementById('countedCode').value;
+      let code;
+      if(isEarly){
+        code = document.getElementById('countedCodeText').value.trim().toUpperCase();
+        if(!code){ alert('Enter a SKU'); return; }
+        const knownCodes = new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code));
+        if(!knownCodes.has(code)){ alert('Not a known SKU — check for a typo: ' + code); return; }
+      } else {
+        code = document.getElementById('countedCode').value;
+      }
       const size = document.getElementById('countedSize').value;
       try{
         const variantId = await getOrCreateVariant(code, size);
@@ -1434,9 +1465,11 @@
     const btn = document.getElementById('submitDetailsBtn');
     if(btn){ btn.disabled = true; btn.textContent = 'Submitting…'; }
     try{
-      const { data: grnRow, error: eGrn } = await sb.from('grn').select('status').eq('id', selectedDetailGrn).single();
+      const { data: grnRow, error: eGrn } = await sb.from('grn').select('status, grn_type').eq('id', selectedDetailGrn).single();
       if(eGrn){ alert('Could not check delivery status: ' + eGrn.message); return; }
-      const isRecount = grnRow.status === 'posted';
+      const isPostedRecount = grnRow.status === 'posted';
+      const isEarlyCount = grnRow.status === 'submitted' && grnRow.grn_type === 'stock';
+      const usesRecountFn = isPostedRecount || isEarlyCount;
 
       const rows = localCountedLines.map(l => ({
         grn_id: selectedDetailGrn, material_id: l.material_id, counted_quantity: l.qty, entry_method: l.method, entered_by: me.id
@@ -1444,17 +1477,14 @@
       const { error: e1 } = await sb.from('grn_counted_lines').insert(rows);
       if(e1){ alert('Could not save lines: ' + e1.message); return; }
 
-      const rpcName = isRecount ? 'submit_recount' : 'submit_grn_details';
-      const rpcParams = isRecount
-        ? { p_grn_id: selectedDetailGrn, p_submitter_id: me.id }
-        : { p_grn_id: selectedDetailGrn, p_submitter_id: me.id };
-      const { error: e2 } = await sb.rpc(rpcName, rpcParams);
+      const rpcName = usesRecountFn ? 'submit_recount' : 'submit_grn_details';
+      const { error: e2 } = await sb.rpc(rpcName, { p_grn_id: selectedDetailGrn, p_submitter_id: me.id });
       if(e2){ alert('Lines saved, but submit failed: ' + e2.message + ' — try Submit again, your lines are safe.'); return; }
 
       selectedDetailGrn = null;
       localCountedLines = [];
       boySub = 'log';
-      alert(isRecount ? 'Physical count submitted — an approver will reconcile it against what already posted.' : 'Submitted — now in the approval queue.');
+      alert(isEarlyCount ? 'Physical count saved — it will be checked automatically once this delivery is approved.' : (isPostedRecount ? 'Physical count submitted — an approver will reconcile it against what already posted.' : 'Submitted — now in the approval queue.'));
       await renderBoy();
     } catch(err) {
       alert('Something went wrong submitting these details: ' + err.message + '. Your lines may already be saved — check History before re-entering them.');
