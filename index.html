@@ -1063,6 +1063,21 @@
   // ---------- HISTORY ----------
   let historyFilters = { fromDate:'', toDate:'', vendorId:'' };
 
+  function friendlyGrnStatus(g){
+    if(g.rejection_reason) return 'rejected — resubmit needed';
+    if(g.status === 'intake') return 'waiting for details';
+    if(g.status === 'submitted') return 'waiting for approval';
+    if(g.status === 'posted'){
+      if(g.grn_type === 'stock'){
+        if(g.recount_status === 'pending') return 'approved — recount needed';
+        if(g.recount_status === 'submitted') return 'approved — recount pending reconciliation';
+        if(g.recount_status === 'reconciled') return 'approved & reconciled';
+      }
+      return 'approved';
+    }
+    return g.status;
+  }
+
   async function renderHistoryForm(){
     const area = document.getElementById('boyFormArea');
     area.innerHTML = '<div class="card2 accent-history"><div class="loading">Loading…</div></div>';
@@ -1094,7 +1109,7 @@
           ${(data||[]).length===0 ? '<div class="empty">No entries found for this filter.</div>' : data.map(g => `
             <div class="list-item" style="cursor:pointer;" onclick="openHistoryDetail('${g.id}')">
               <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${g.grn_type}">${g.grn_type}</span></div>
-              <div class="meta">${g.receiving_book_ref||'no bill no'} · ${fmtDate(g.entry_date || g.created_at)} · ${g.status}</div>
+              <div class="meta">${g.receiving_book_ref||'no bill no'} · ${fmtDate(g.entry_date || g.created_at)} · ${friendlyGrnStatus(g)}</div>
             </div>
           `).join('')}
         </div>
@@ -1140,7 +1155,7 @@
     area.innerHTML = `
       <div class="card2" style="background:var(--bb-bg);">
         <h3>${vendorName(grn.vendor_id)}</h3>
-        <p class="section-note">${grn.receiving_book_ref||'no bill no'} · ${fmtDate(grn.entry_date || grn.created_at)} · logged by ${userName(grn.created_by)} · status: ${grn.status}</p>
+        <p class="section-note">${grn.receiving_book_ref||'no bill no'} · ${fmtDate(grn.entry_date || grn.created_at)} · logged by ${userName(grn.created_by)} · status: ${friendlyGrnStatus(grn)}</p>
         ${grn.grn_type === 'stock' && grn.total_quantity_reported ? `<div class="modal-total">Total Quantity Reported: ${grn.total_quantity_reported}</div>` : ''}
         ${photoHtml}
         <h4>Receiving Book</h4>
@@ -1153,17 +1168,15 @@
   }
 
   async function renderPendingList(){
-    const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }, { data: awaitingApprovalData, error: e3 }] = await Promise.all([
+    const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }] = await Promise.all([
       sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false }),
       sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
-      sb.from('grn').select('*').eq('status','submitted').order('created_at', { ascending:false }),
     ]);
     const container = document.getElementById('pendingList');
-    if(e1 || e2 || e3){ container.innerHTML = `<div class="empty">Could not load: ${(e1||e2||e3).message}</div>`; return; }
+    if(e1 || e2){ container.innerHTML = `<div class="empty">Could not load: ${(e1||e2).message}</div>`; return; }
     const pending = [...(intakeData||[]), ...(recountData||[])];
-    const awaitingApproval = awaitingApprovalData || [];
 
-    const pendingHtml = pending.length === 0 ? '<div class="empty">Nothing waiting.</div>' : pending.map(g => {
+    container.innerHTML = pending.length === 0 ? '<div class="empty">Nothing waiting.</div>' : pending.map(g => {
       const rejected = !!g.rejection_reason && g.status === 'intake';
       const isRecount = g.status === 'posted';
       const refTime = isRecount ? g.posted_at : g.created_at;
@@ -1175,18 +1188,6 @@
           ${rejected ? `<div class="meta" style="color:var(--bb-rust);">Reason: ${g.rejection_reason}</div>` : ''}
         </div>`;
     }).join('');
-
-    const awaitingHtml = awaitingApproval.length === 0 ? '' : `
-      <h4 style="margin-top:14px;">Awaiting Approval (no action needed)</h4>
-      ${awaitingApproval.map(g => `
-        <div class="list-item" style="cursor:default; opacity:0.75;">
-          <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge stock">stock</span></div>
-          <div class="meta">${g.receiving_book_ref || 'no bill no'}${g.total_quantity_reported ? ' · total: '+g.total_quantity_reported : ''} · logged, safely waiting on an approver</div>
-        </div>
-      `).join('')}
-    `;
-
-    container.innerHTML = pendingHtml + awaitingHtml;
   }
 
   function openAddDetails(id){ selectedDetailGrn = id; localCountedLines = []; boySub = 'detail'; renderBoy(); }
