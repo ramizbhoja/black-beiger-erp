@@ -1473,120 +1473,159 @@
   }
 
   let currentExcelValidCodes = [];
-  let pendingExcelCorrections = {};
+
+  // Compact, code-level comparison — Excel total vs. Book total per code,
+  // not per individual SKU-size. 5 correct codes collapse to 5 short rows
+  // instead of burying the 1 real problem under 35 correct size-rows.
+  let pendingExcelParsed = [];
+  let pendingExcelCodeRelabels = {};
 
   async function confirmExcelVendorPick(){
     const grnId = document.getElementById('excelVendorPick').value;
     const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
     if(error){ alert('Could not load that delivery: ' + error.message); pendingExcelTally = null; return; }
 
-    const { data: recvLines } = await sb.from('grn_receiving_lines').select('base_item_code').eq('grn_id', grnId);
-    const breakdownCodes = Array.from(new Set((recvLines||[]).map(l => l.base_item_code)));
-    const validCodes = breakdownCodes.length
-      ? breakdownCodes
+    const { data: recvLines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grnId);
+    const bookByCode = {};
+    (recvLines||[]).forEach(l => { bookByCode[l.base_item_code] = (bookByCode[l.base_item_code]||0) + Number(l.quantity); });
+    const validCodes = Object.keys(bookByCode).length
+      ? Object.keys(bookByCode)
       : Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)));
     currentExcelValidCodes = validCodes;
-    pendingExcelCorrections = {};
+    pendingExcelCodeRelabels = {};
 
-    const matched = {};
-    const unmatched = [];
+    // Normalize every entry's code for display (add the LS prefix even if
+    // the file omitted it) without yet deciding whether it's valid.
+    const parsed = [];
     Object.entries(pendingExcelTally).forEach(([sku, qty]) => {
       const m = sku.match(/^(.+)-(\d+)$/);
       let code = m[1], size = m[2];
-      if(!validCodes.includes(code) && validCodes.includes('LS'+code)) code = 'LS'+code;
-      if(!validCodes.includes(code)){ unmatched.push({ sku, qty, code, size }); return; }
-      matched[code+'-'+size] = { code, size, qty };
+      if(!code.startsWith('LS') && /^\d+$/.test(code)) code = 'LS'+code;
+      parsed.push({ code, size, qty });
     });
+    pendingExcelParsed = parsed;
 
-    if(Object.keys(matched).length === 0 && unmatched.length === 0){
-      alert('No valid SKU rows found in the file.');
-      pendingExcelTally = null;
-      return;
-    }
+    const excelByCode = {};
+    parsed.forEach(e => { excelByCode[e.code] = (excelByCode[e.code]||0) + e.qty; });
 
-    const summaryRows = Object.entries(matched).map(([sku,{qty}]) =>
-      `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${sku}</span><span class="mono">${qty}</span></div></div>`
-    ).join('');
-    const grandTotal = Object.values(matched).reduce((s,{qty})=>s+qty, 0);
+    const allCodes = Array.from(new Set([...Object.keys(excelByCode), ...Object.keys(bookByCode)]));
+    const rows = allCodes.map(code => {
+      const excelQty = excelByCode[code] || 0;
+      const bookQty = bookByCode[code] || 0;
+      const isKnown = validCodes.includes(code);
+      return { code, excelQty, bookQty, isKnown, ok: isKnown && excelQty === bookQty };
+    }).sort((a,b) => (a.ok === b.ok) ? 0 : (a.ok ? 1 : -1)); // problems first
 
-    const unmatchedRows = unmatched.map((u, idx) => {
-      const suggestion = findClosestCode(u.code, validCodes);
+    // Swap detection: a code Excel has that Book doesn't, paired with a
+    // code Book expects that Excel never scanned, at the exact same qty —
+    // almost certainly one mislabeled code repeated across every size.
+    const swaps = [];
+    rows.filter(r => !r.isKnown && r.excelQty > 0).forEach(bad => {
+      const target = rows.find(r => r.isKnown && r.excelQty === 0 && r.bookQty === bad.excelQty);
+      if(target) swaps.push({ from: bad.code, to: target.code, qty: bad.excelQty });
+    });
+    const swappedCodes = new Set(swaps.flatMap(s => [s.from, s.to]));
+
+    const tableRows = rows.map(r => `
+      <tr>
+        <td>${r.code}</td>
+        <td>${r.excelQty || '—'}</td>
+        <td>${r.bookQty || '—'}</td>
+        <td class="variance ${r.ok ? 'zero' : 'nonzero'}">${r.ok ? '✓' : '⚠'}</td>
+      </tr>
+    `).join('');
+
+    const swapHtml = swaps.map(s => `
+      <div class="list-item" style="border-color:var(--bb-brass); background:#FBF6EE;">
+        <span style="font-size:12.5px;">${s.from} doesn't match anything on the Book, and ${s.to} is missing entirely — same qty (${s.qty}) on every size. Likely the same code, mislabeled.</span>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="applyCodeSwap(this, '${s.from}', '${s.to}')">Relabel all ${s.from} → ${s.to}</button>
+      </div>
+    `).join('');
+
+    // Any remaining problem row not covered by a detected swap gets a
+    // simple code-level relabel field — one input per CODE, not per size.
+    const manualRows = rows.filter(r => !r.ok && !swappedCodes.has(r.code)).map(r => {
+      const suggestion = r.isKnown ? null : findClosestCode(r.code, validCodes);
       return `
-        <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">
-          <div class="top"><span>Read as: ${u.sku}</span><span class="mono">${u.qty}</span></div>
-          <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
-            <input type="text" class="unmatched-fix" data-idx="${idx}" data-size="${u.size}" data-qty="${u.qty}" value="${u.code}"
-              oninput="validateUnmatchedFix(this)" style="flex:1; margin-bottom:0; text-transform:uppercase;">
-            <span class="fix-status" id="fix-status-${idx}" style="font-size:16px; width:22px; text-align:center; color:var(--bb-rust);">✕</span>
-          </div>
-          ${suggestion ? `<button type="button" class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="applySuggestedFix(this, ${idx}, '${suggestion}')">Did you mean ${suggestion}? Use this</button>` : ''}
+      <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">
+        <div class="top"><span>${r.code}</span><span class="mono">Excel ${r.excelQty || 0} / Book ${r.bookQty || 0}</span></div>
+        ${suggestion ? `<p style="font-size:11.5px; color:var(--bb-ink-muted); margin:4px 0;">Close to ${suggestion} — worth checking.</p>` : ''}
+        <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+          <input type="text" class="code-fix" data-orig="${r.code}" value="${r.code}"
+            oninput="validateCodeFix(this)" style="flex:1; margin-bottom:0; text-transform:uppercase;">
+          <span class="fix-status" id="code-fix-status-${r.code}" style="font-size:16px; width:22px; text-align:center;"></span>
         </div>
-      `;
-    }).join('');
-    const unmatchedHtml = unmatched.length ? `
-      <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">Not matched — correct here if this is just a typo, or leave as-is to skip it:</p>
-      ${unmatchedRows}
-    ` : '';
+      </div>
+    `;}).join('');
 
-    pendingExcelMatch = { grnId, matched };
+    pendingExcelMatch = { grnId };
     showConfirmModal('Confirm Summary — ' + vendorName(grn.vendor_id), `
-      ${summaryRows}
-      <div class="modal-total">Total: ${grandTotal}</div>
-      ${unmatchedHtml}
+      <table><tr><th>Code</th><th>Excel</th><th>Book</th><th></th></tr>${tableRows}</table>
+      ${swapHtml}
+      ${manualRows}
     `, finalizeExcelImport);
   }
 
-  // Runs on every keystroke, since the modal clears its own content the
-  // instant Confirm is tapped — corrections have to be tracked live, not
-  // read from the DOM after the fact.
-  function validateUnmatchedFix(input){
-    const idx = input.dataset.idx;
+  function applyCodeSwap(btn, fromCode, toCode){
+    pendingExcelCodeRelabels[fromCode] = toCode;
+    // Re-render the modal body's table row for immediate feedback without
+    // rebuilding the whole comparison from scratch.
+    document.querySelectorAll('#modalBody tr').forEach(tr => {
+      const codeCell = tr.querySelector('td');
+      if(codeCell && codeCell.textContent === fromCode){
+        tr.querySelector('.variance').textContent = '✓';
+        tr.querySelector('.variance').className = 'variance zero';
+      }
+    });
+    btn.disabled = true;
+    btn.textContent = 'Applied';
+  }
+
+  function validateCodeFix(input){
     const code = input.value.trim().toUpperCase();
-    const statusEl = document.getElementById('fix-status-' + idx);
+    const orig = input.dataset.orig;
+    const statusEl = document.getElementById('code-fix-status-' + orig);
     const isValid = currentExcelValidCodes.includes(code);
     input.style.borderColor = isValid ? 'var(--bb-sage)' : 'var(--bb-rust)';
     input.style.background = isValid ? '#F0F7F1' : '#fff';
-    if(statusEl){ statusEl.textContent = isValid ? '✓' : '✕'; statusEl.style.color = isValid ? 'var(--bb-sage)' : 'var(--bb-rust)'; }
-    pendingExcelCorrections[idx] = isValid ? { code, size: input.dataset.size, qty: Number(input.dataset.qty) } : null;
-  }
-  function applySuggestedFix(button, idx, suggestedCode){
-    const row = button.closest('.list-item');
-    const input = row.querySelector('.unmatched-fix');
-    input.value = suggestedCode;
-    validateUnmatchedFix(input);
-    button.remove();
+    if(statusEl){ statusEl.textContent = isValid ? '✓' : ''; statusEl.style.color = 'var(--bb-sage)'; }
+    if(isValid && code !== orig) pendingExcelCodeRelabels[orig] = code;
+    else delete pendingExcelCodeRelabels[orig];
   }
 
-  // Step 4: only now does anything actually get added to the lines list —
-  // the originally-matched entries, plus any correction that was typed in
-  // and turned valid. Anything still red is skipped, exactly as chosen.
+  // Step 4: apply any relabels to the parsed entries, then add only the
+  // ones that end up as a genuinely known code — anything still wrong is
+  // simply left out, exactly as chosen.
   async function finalizeExcelImport(){
     if(!pendingExcelMatch) return;
-    const { grnId, matched } = pendingExcelMatch;
+    const { grnId } = pendingExcelMatch;
     try{
       selectedDetailGrn = grnId;
       localCountedLines = [];
       let added = 0;
       const errors = [];
-      const allEntries = [
-        ...Object.values(matched),
-        ...Object.values(pendingExcelCorrections).filter(c => c)
-      ];
-      for(const { code, size, qty } of allEntries){
+      const skipped = [];
+      for(const { code, size, qty } of pendingExcelParsed){
+        const finalCode = pendingExcelCodeRelabels[code] || code;
+        if(!currentExcelValidCodes.includes(finalCode)){ skipped.push(code+'-'+size); continue; }
         try{
-          const variantId = await getOrCreateVariant(code, size);
-          localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: code+'-'+size });
+          const variantId = await getOrCreateVariant(finalCode, size);
+          localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: finalCode+'-'+size });
           added++;
-        }catch(err){ errors.push(code+'-'+size+' ('+err.message+')'); }
+        }catch(err){ errors.push(finalCode+'-'+size+' ('+err.message+')'); }
       }
-      if(errors.length) alert('Added ' + added + ' line(s). Errors: ' + errors.join(', '));
+      let msg = 'Added ' + added + ' line(s) from the file.';
+      if(skipped.length) msg += ' Skipped (still not a known code): ' + skipped.join(', ') + '.';
+      if(errors.length) msg += ' Errors: ' + errors.join(', ') + '.';
+      if(skipped.length || errors.length) alert(msg);
       await renderBoy();
     } catch(err) {
       alert('Something went wrong adding these lines: ' + err.message);
     } finally {
       pendingExcelTally = null;
       pendingExcelMatch = null;
-      pendingExcelCorrections = {};
+      pendingExcelParsed = [];
+      pendingExcelCodeRelabels = {};
     }
   }
 
