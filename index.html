@@ -1524,7 +1524,7 @@
       const target = rows.find(r => r.isKnown && r.excelQty === 0 && r.bookQty === bad.excelQty);
       if(target) swaps.push({ from: bad.code, to: target.code, qty: bad.excelQty });
     });
-    const swappedCodes = new Set(swaps.flatMap(s => [s.from, s.to]));
+    const usedInPair = new Set(swaps.flatMap(s => [s.from, s.to]));
 
     const tableRows = rows.map(r => `
       <tr>
@@ -1542,26 +1542,57 @@
       </div>
     `).join('');
 
-    // Any remaining problem row not covered by a detected swap gets a
-    // simple code-level relabel field — one input per CODE, not per size.
-    const manualRows = rows.filter(r => !r.ok && !swappedCodes.has(r.code)).map(r => {
-      const suggestion = r.isKnown ? null : findClosestCode(r.code, validCodes);
-      return `
+    // When quantities don't align exactly, still pair a near-match
+    // suggestion with the specific Book row it's likely meant to be —
+    // one card showing both sides, not two separate ones with no
+    // visible connection between them. Pre-filled as the likely fix,
+    // but honest about any leftover gap rather than hiding it.
+    const pairedHtml = [];
+    const stillUnpaired = [];
+    rows.filter(r => !r.ok && !usedInPair.has(r.code)).forEach(r => {
+      if(usedInPair.has(r.code)) return;
+      const suggestion = !r.isKnown ? findClosestCode(r.code, validCodes) : null;
+      const targetRow = suggestion ? rows.find(x => x.code === suggestion && !x.ok && !usedInPair.has(x.code)) : null;
+      if(targetRow){
+        usedInPair.add(r.code); usedInPair.add(targetRow.code);
+        pendingExcelCodeRelabels[r.code] = targetRow.code;
+        const gap = targetRow.bookQty - r.excelQty;
+        pairedHtml.push(`
+          <div class="list-item" style="border-color:var(--bb-brass); background:#FBF6EE;">
+            <div style="font-size:12.5px; margin-bottom:6px;">
+              <b>${r.code}</b> — Excel ${r.excelQty}, not on the Book<br>
+              <b>${targetRow.code}</b> — Book ${targetRow.bookQty}, nothing scanned yet
+            </div>
+            <p style="font-size:11.5px; color:var(--bb-ink-muted); margin:4px 0 6px;">These are probably the same code — relabel ${r.code} to:</p>
+            <input type="text" class="code-fix" data-orig="${r.code}" value="${targetRow.code}"
+              oninput="validateCodeFix(this)" style="margin-bottom:0; text-transform:uppercase; border-color:var(--bb-sage); background:#F0F7F1;">
+            ${gap !== 0 ? `<p style="font-size:11px; color:var(--bb-rust); margin:6px 0 0;">Even after relabeling, that's still ${Math.abs(gap)} ${gap>0?'short of':'over'} the Book's ${targetRow.bookQty} — will still show as a real variance later, not hidden.</p>` : ''}
+          </div>
+        `);
+      } else {
+        stillUnpaired.push(r);
+      }
+    });
+
+    // Anything left with no clear pairing at all — plain correction field,
+    // no pre-fill, no guessing.
+    const manualRows = stillUnpaired.map(r => `
       <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">
         <div class="top"><span>${r.code}</span><span class="mono">Excel ${r.excelQty || 0} / Book ${r.bookQty || 0}</span></div>
-        ${suggestion ? `<p style="font-size:11.5px; color:var(--bb-ink-muted); margin:4px 0;">Close to ${suggestion} — worth checking.</p>` : ''}
         <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
           <input type="text" class="code-fix" data-orig="${r.code}" value="${r.code}"
             oninput="validateCodeFix(this)" style="flex:1; margin-bottom:0; text-transform:uppercase;">
           <span class="fix-status" id="code-fix-status-${r.code}" style="font-size:16px; width:22px; text-align:center;"></span>
         </div>
+        <p style="font-size:11px; color:var(--bb-ink-muted); margin:6px 0 0;">Leave as-is and confirm if you're not sure — it'll be saved as unresolved for the approver to check against the photo.</p>
       </div>
-    `;}).join('');
+    `).join('');
 
     pendingExcelMatch = { grnId };
     showConfirmModal('Confirm Summary — ' + vendorName(grn.vendor_id), `
       <table><tr><th>Code</th><th>Excel</th><th>Book</th><th></th></tr>${tableRows}</table>
       ${swapHtml}
+      ${pairedHtml.join('')}
       ${manualRows}
     `, finalizeExcelImport);
   }
@@ -1604,20 +1635,27 @@
       localCountedLines = [];
       let added = 0;
       const errors = [];
-      const skipped = [];
+      const unresolvedRows = [];
       for(const { code, size, qty } of pendingExcelParsed){
         const finalCode = pendingExcelCodeRelabels[code] || code;
-        if(!currentExcelValidCodes.includes(finalCode)){ skipped.push(code+'-'+size); continue; }
+        if(!currentExcelValidCodes.includes(finalCode)){
+          unresolvedRows.push({ grn_id: grnId, raw_sku: code+'-'+size, raw_code: code, size, quantity: qty, entered_by: me.id });
+          continue;
+        }
         try{
           const variantId = await getOrCreateVariant(finalCode, size);
           localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: finalCode+'-'+size });
           added++;
         }catch(err){ errors.push(finalCode+'-'+size+' ('+err.message+')'); }
       }
+      if(unresolvedRows.length){
+        const { error: eUnres } = await sb.from('grn_unresolved_lines').insert(unresolvedRows);
+        if(eUnres) errors.push('Could not save unresolved rows: ' + eUnres.message);
+      }
       let msg = 'Added ' + added + ' line(s) from the file.';
-      if(skipped.length) msg += ' Skipped (still not a known code): ' + skipped.join(', ') + '.';
+      if(unresolvedRows.length) msg += ' ' + unresolvedRows.length + ' line(s) saved as unresolved for the approver to check — not lost, not counted yet.';
       if(errors.length) msg += ' Errors: ' + errors.join(', ') + '.';
-      if(skipped.length || errors.length) alert(msg);
+      if(unresolvedRows.length || errors.length) alert(msg);
       await renderBoy();
     } catch(err) {
       alert('Something went wrong adding these lines: ' + err.message);
@@ -1981,7 +2019,10 @@
   // ---------- MODE C: reconciling the later physical recount against what already posted ----------
   async function renderReconciliationDetail(grn, photoHtml){
     const grnId = grn.id;
-    const { data: rows } = await sb.from('grn_receiving_vs_scanned_v').select('*').eq('grn_id', grnId);
+    const [{ data: rows }, { data: unresolvedLines }] = await Promise.all([
+      sb.from('grn_receiving_vs_scanned_v').select('*').eq('grn_id', grnId),
+      sb.from('grn_unresolved_lines').select('*').eq('grn_id', grnId).eq('status','open'),
+    ]);
     const sameUser = me.id === grn.details_entered_by;
 
     const varianceHtml = `
@@ -2000,6 +2041,20 @@
       </table></div>
     `;
 
+    const unresolvedHtml = (unresolvedLines && unresolvedLines.length) ? `
+      <h4>Unresolved from the Boy's Excel Upload</h4>
+      <p class="section-note">He couldn't match these to a known SKU — check the photo and resolve each here.</p>
+      ${unresolvedLines.map(u => `
+        <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">
+          <div class="top"><span>Read as: ${u.raw_sku}</span><span class="mono">${u.quantity}</span></div>
+          <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
+            <input type="text" id="resolve-code-${u.id}" value="${u.raw_code}" style="flex:1; margin-bottom:0; text-transform:uppercase;">
+            <button class="btn btn-secondary btn-sm" onclick="resolveUnresolvedLine('${u.id}', '${grnId}', '${u.size}', ${u.quantity})">Resolve</button>
+          </div>
+        </div>
+      `).join('')}
+    ` : '';
+
     document.getElementById('approvalDetail').innerHTML = `
       <div class="card2">
         <h3>${vendorName(grn.vendor_id)} — Reconciliation</h3>
@@ -2007,10 +2062,36 @@
         ${sameUser ? '<div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">You did the physical recount — a teammate needs to reconcile it, not you.</div>' : ''}
         <div class="list-item" style="cursor:default;">This only ever creates variance flags for a mismatch — the Ledger is already posted and will not change here.</div>
         ${photoHtml}
+        ${unresolvedHtml}
         ${varianceHtml}
         <button class="btn btn-primary btn-block" ${sameUser?'disabled style="opacity:0.5;"':''} id="reconcileBtn" onclick="reconcileRecountLive('${grnId}')" style="margin-top:12px;">Reconcile</button>
       </div>
     `;
+  }
+
+  async function resolveUnresolvedLine(id, grnId, size, qty){
+    const input = document.getElementById('resolve-code-' + id);
+    const code = input.value.trim().toUpperCase();
+    const isKnown = refData.materials.some(m => m.category === 'stock' && m.base_item_code === code);
+    if(!isKnown){ alert('Not a known SKU: ' + code); return; }
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      const variantId = await getOrCreateVariant(code, size);
+      const { error: e1 } = await sb.from('grn_counted_lines').insert({
+        grn_id: grnId, material_id: variantId, counted_quantity: qty, entry_method: 'excel_upload', entered_by: me.id
+      });
+      if(e1){ alert('Could not add counted line: ' + e1.message); return; }
+      const { error: e2 } = await sb.from('grn_unresolved_lines').update({
+        status: 'resolved', resolved_code: code, resolved_by: me.id, resolved_at: new Date().toISOString()
+      }).eq('id', id);
+      if(e2){ alert('Counted line added, but could not mark resolved: ' + e2.message); return; }
+      await openApprovalDetail(grnId);
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+    }
   }
 
   async function reconcileRecountLive(grnId){
