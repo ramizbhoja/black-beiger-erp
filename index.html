@@ -1392,93 +1392,104 @@
   async function handleExcelUpload(input, allowedCodes){
     const file = input.files[0];
     if(!file) return;
-    const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type:'array' });
+    try{
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:'array' });
 
-    // No allowedCodes means this is an early count, before the approver
-    // has entered a breakdown to constrain against — fall back to the
-    // full known stock catalog instead.
-    const isEarlyMode = !allowedCodes;
-    const validCodes = isEarlyMode
-      ? Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)))
-      : allowedCodes;
+      // No allowedCodes means this is an early count, before the approver
+      // has entered a breakdown to constrain against — fall back to the
+      // full known stock catalog instead.
+      const isEarlyMode = !allowedCodes;
+      const validCodes = isEarlyMode
+        ? Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)))
+        : allowedCodes;
 
-    // Every sheet, one column, no header — one row per physically scanned
-    // unit (e.g. 8 rows reading "1155-39" means qty 8, not one row saying
-    // qty=8). Tally occurrences across every sheet in the file.
-    const skuTally = {};
-    wb.SheetNames.forEach(sheetName => {
-      const sheet = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(sheet, { header:1 });
-      rows.forEach(row => {
-        const raw = row[0];
-        if(!raw) return;
-        const sku = String(raw).trim().toUpperCase();
-        if(!/^.+-\d+$/.test(sku)) return;
-        skuTally[sku] = (skuTally[sku]||0) + 1;
+      // Every sheet, one column, no header — one row per physically scanned
+      // unit (e.g. 8 rows reading "1155-39" means qty 8, not one row saying
+      // qty=8). Tally occurrences across every sheet in the file.
+      const skuTally = {};
+      wb.SheetNames.forEach(sheetName => {
+        const sheet = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header:1 });
+        rows.forEach(row => {
+          const raw = row[0];
+          if(!raw) return;
+          const sku = String(raw).trim().toUpperCase();
+          if(!/^.+-\d+$/.test(sku)) return;
+          skuTally[sku] = (skuTally[sku]||0) + 1;
+        });
       });
-    });
 
-    if(Object.keys(skuTally).length === 0){ alert('No valid SKU rows found in the file'); input.value=''; return; }
+      if(Object.keys(skuTally).length === 0){ alert('No valid SKU rows found in the file'); input.value=''; return; }
 
-    // Split each tallied SKU into code + size, matching against the valid
-    // code list. Some exports omit the "LS" prefix on the value itself
-    // (e.g. "1155-39" instead of "LS1155-39") — try both forms before
-    // giving up on a code.
-    const matched = {};
-    const unmatched = [];
-    Object.entries(skuTally).forEach(([sku, qty]) => {
-      const m = sku.match(/^(.+)-(\d+)$/);
-      let code = m[1], size = m[2];
-      if(!validCodes.includes(code) && validCodes.includes('LS'+code)) code = 'LS'+code;
-      if(!validCodes.includes(code)){ unmatched.push({ sku, qty }); return; }
-      matched[code+'-'+size] = { code, size, qty };
-    });
+      // Split each tallied SKU into code + size, matching against the valid
+      // code list. Some exports omit the "LS" prefix on the value itself
+      // (e.g. "1155-39" instead of "LS1155-39") — try both forms before
+      // giving up on a code.
+      const matched = {};
+      const unmatched = [];
+      Object.entries(skuTally).forEach(([sku, qty]) => {
+        const m = sku.match(/^(.+)-(\d+)$/);
+        let code = m[1], size = m[2];
+        if(!validCodes.includes(code) && validCodes.includes('LS'+code)) code = 'LS'+code;
+        if(!validCodes.includes(code)){ unmatched.push({ sku, qty }); return; }
+        matched[code+'-'+size] = { code, size, qty };
+      });
 
-    if(Object.keys(matched).length === 0){
-      alert(isEarlyMode
-        ? 'None of the SKUs in this file matched a known stock code. Check the file for typos.'
-        : 'None of the SKUs in this file are on this delivery\'s Receiving Book. Check the file, or confirm you picked the right delivery.');
+      if(Object.keys(matched).length === 0){
+        alert(isEarlyMode
+          ? 'None of the SKUs in this file matched a known stock code. Check the file for typos.'
+          : 'None of the SKUs in this file are on this delivery\'s Receiving Book. Check the file, or confirm you picked the right delivery.');
+        input.value = '';
+        return;
+      }
+
+      const summaryByCode = {};
+      Object.values(matched).forEach(({code, qty}) => { summaryByCode[code] = (summaryByCode[code]||0) + qty; });
+      const grandTotal = Object.values(summaryByCode).reduce((s,q)=>s+q, 0);
+
+      const summaryRows = Object.entries(summaryByCode).map(([code,qty]) =>
+        `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${code}</span><span class="mono">${qty}</span></div></div>`
+      ).join('');
+      const unmatchedHtml = unmatched.length ? `
+        <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">${isEarlyMode ? 'Not a known stock code' : "Not on this delivery's Receiving Book"} — skipped:</p>
+        <ul style="font-size:12.5px; color:var(--bb-rust);">${unmatched.map(u=>`<li>${u.sku} × ${u.qty}</li>`).join('')}</ul>
+      ` : '';
+
+      pendingBulkExcelData = matched;
+      showConfirmModal('Confirm counted quantities', `
+        <p style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--bb-ink-muted); margin-top:0;">Summary</p>
+        ${summaryRows}
+        <div class="modal-total">Total: ${grandTotal}</div>
+        ${unmatchedHtml}
+      `, confirmBulkExcelImport);
       input.value = '';
-      return;
+    } catch(err) {
+      alert('Could not read this file: ' + err.message + '. Check it\'s a genuine Excel/CSV file and try again.');
+      input.value = '';
     }
-
-    const summaryByCode = {};
-    Object.values(matched).forEach(({code, qty}) => { summaryByCode[code] = (summaryByCode[code]||0) + qty; });
-    const grandTotal = Object.values(summaryByCode).reduce((s,q)=>s+q, 0);
-
-    const summaryRows = Object.entries(summaryByCode).map(([code,qty]) =>
-      `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${code}</span><span class="mono">${qty}</span></div></div>`
-    ).join('');
-    const unmatchedHtml = unmatched.length ? `
-      <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">${isEarlyMode ? 'Not a known stock code' : "Not on this delivery's Receiving Book"} — skipped:</p>
-      <ul style="font-size:12.5px; color:var(--bb-rust);">${unmatched.map(u=>`<li>${u.sku} × ${u.qty}</li>`).join('')}</ul>
-    ` : '';
-
-    pendingBulkExcelData = matched;
-    showConfirmModal('Confirm counted quantities', `
-      <p style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--bb-ink-muted); margin-top:0;">Summary</p>
-      ${summaryRows}
-      <div class="modal-total">Total: ${grandTotal}</div>
-      ${unmatchedHtml}
-    `, confirmBulkExcelImport);
-    input.value = '';
   }
 
   async function confirmBulkExcelImport(){
     if(!pendingBulkExcelData) return;
     let added = 0;
     const errors = [];
-    for(const [sku, { code, size, qty }] of Object.entries(pendingBulkExcelData)){
-      try{
-        const variantId = await getOrCreateVariant(code, size);
-        localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: sku });
-        added++;
-      }catch(err){ errors.push(sku + ' (' + err.message + ')'); }
+    try{
+      for(const [sku, { code, size, qty }] of Object.entries(pendingBulkExcelData)){
+        try{
+          const variantId = await getOrCreateVariant(code, size);
+          localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: sku });
+          added++;
+        }catch(err){ errors.push(sku + ' (' + err.message + ')'); }
+      }
+      pendingBulkExcelData = null;
+      if(errors.length) alert('Added ' + added + ' line(s). Errors: ' + errors.join(', '));
+      renderAddDetailsForm();
+    } catch(err) {
+      alert('Something went wrong importing these lines: ' + err.message + '. ' + added + ' line(s) were added before this happened.');
+      pendingBulkExcelData = null;
+      renderAddDetailsForm();
     }
-    pendingBulkExcelData = null;
-    if(errors.length) alert('Added ' + added + ' line(s). Errors: ' + errors.join(', '));
-    renderAddDetailsForm();
   }
 
   function submitForApproval(){
