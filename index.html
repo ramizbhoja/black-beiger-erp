@@ -1731,9 +1731,17 @@
     });
     if(lines.length === 0){ alert('Add at least one SKU + qty'); return; }
 
-    const knownCodes = new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code));
+    const stockMaterials = refData.materials.filter(m => m.category === 'stock');
+    const knownCodes = new Set(stockMaterials.map(m => m.base_item_code));
     const unknownCodes = Array.from(new Set(lines.map(l => l.base_item_code).filter(c => !knownCodes.has(c))));
-    if(unknownCodes.length){ alert('Not a known SKU — check for a typo: ' + unknownCodes.join(', ')); return; }
+    if(unknownCodes.length){
+      alert('Not a known SKU — check for a typo: ' + unknownCodes.join(', ') +
+        '\n\n[DIAGNOSTIC] Total materials loaded: ' + refData.materials.length +
+        ' | Stock materials loaded: ' + stockMaterials.length +
+        ' | Sample of loaded codes: ' + Array.from(knownCodes).slice(0,5).join(', ') +
+        ' | Exact match check for "' + unknownCodes[0] + '": ' + (stockMaterials.some(m => m.base_item_code === unknownCodes[0]) ? 'FOUND in array but Set failed' : 'genuinely absent from loaded data'));
+      return;
+    }
 
     const sum = lines.reduce((s,l) => s + l.quantity, 0);
     if(sum !== targetTotal){ alert('Your breakdown totals ' + sum + ', but the boy reported ' + targetTotal + '. These must match exactly before saving.'); return; }
