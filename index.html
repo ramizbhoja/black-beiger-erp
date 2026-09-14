@@ -1387,8 +1387,6 @@
   }
   function removeLocalCountedLine(idx){ localCountedLines.splice(idx,1); renderAddDetailsForm(); }
 
-  let pendingBulkExcelData = null;
-
   async function handleExcelUpload(input, allowedCodes){
     const file = input.files[0];
     if(!file) return;
@@ -1444,61 +1442,41 @@
         return;
       }
 
-      const summaryByCode = {};
-      Object.values(matched).forEach(({code, qty}) => { summaryByCode[code] = (summaryByCode[code]||0) + qty; });
-      const grandTotal = Object.values(summaryByCode).reduce((s,q)=>s+q, 0);
+      // Add straight to the lines list — no separate popup to confirm
+      // here. "Lines so far" already shows everything, and Submit for
+      // Approval is still the one real confirmation before anything is
+      // written to the database.
+      let added = 0;
+      const errors = [];
+      for(const { code, size, qty } of Object.values(matched)){
+        try{
+          const variantId = await getOrCreateVariant(code, size);
+          localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: code+'-'+size });
+          added++;
+        }catch(err){ errors.push(code+'-'+size+' ('+err.message+')'); }
+      }
 
-      const summaryRows = Object.entries(summaryByCode).map(([code,qty]) =>
-        `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${code}</span><span class="mono">${qty}</span></div></div>`
-      ).join('');
-      const unmatchedHtml = unmatched.length ? `
-        <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">${isEarlyMode ? 'Not a known stock code' : "Not on this delivery's Receiving Book"} — skipped:</p>
-        <ul style="font-size:12.5px; color:var(--bb-rust);">${unmatched.map(u=>`<li>${u.sku} × ${u.qty}</li>`).join('')}</ul>
-      ` : '';
-
-      pendingBulkExcelData = matched;
-      showConfirmModal('Confirm counted quantities', `
-        <p style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--bb-ink-muted); margin-top:0;">Summary</p>
-        ${summaryRows}
-        <div class="modal-total">Total: ${grandTotal}</div>
-        ${unmatchedHtml}
-      `, confirmBulkExcelImport);
       input.value = '';
+      let msg = 'Added ' + added + ' line(s) from the file.';
+      if(unmatched.length) msg += ' Skipped (' + (isEarlyMode ? 'not a known code' : "not on this delivery's Receiving Book") + '): ' + unmatched.map(u=>u.sku).join(', ') + '.';
+      if(errors.length) msg += ' Errors: ' + errors.join(', ') + '.';
+      alert(msg);
+      renderAddDetailsForm();
     } catch(err) {
       alert('Could not read this file: ' + err.message + '. Check it\'s a genuine Excel/CSV file and try again.');
       input.value = '';
     }
   }
 
-  async function confirmBulkExcelImport(){
-    if(!pendingBulkExcelData) return;
-    let added = 0;
-    const errors = [];
-    try{
-      for(const [sku, { code, size, qty }] of Object.entries(pendingBulkExcelData)){
-        try{
-          const variantId = await getOrCreateVariant(code, size);
-          localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: sku });
-          added++;
-        }catch(err){ errors.push(sku + ' (' + err.message + ')'); }
-      }
-      pendingBulkExcelData = null;
-      if(errors.length) alert('Added ' + added + ' line(s). Errors: ' + errors.join(', '));
-      renderAddDetailsForm();
-    } catch(err) {
-      alert('Something went wrong importing these lines: ' + err.message + '. ' + added + ' line(s) were added before this happened.');
-      pendingBulkExcelData = null;
-      renderAddDetailsForm();
-    }
-  }
-
-  function submitForApproval(){
+  async function submitForApproval(){
     if(localCountedLines.length === 0){ alert('Add at least one line first'); return; }
+    const { data: grnRow } = await sb.from('grn').select('vendor_id, receiving_book_ref').eq('id', selectedDetailGrn).single();
     const grandTotal = localCountedLines.reduce((s,l) => s + Number(l.qty), 0);
     const rows = localCountedLines.map(l => `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${l.label}</span><span class="mono">${l.qty}</span></div></div>`).join('');
     const varianceHtml = Object.keys(currentGrnReceivedQty).length ? renderLiveVarianceTable() : '';
     const hasNonZero = Object.keys(currentGrnReceivedQty).some(code => (computeCountedByCode()[code]||0) !== currentGrnReceivedQty[code]);
     const body = `
+      <p style="font-size:12.5px; color:var(--bb-ink-muted); margin-top:0;">${grnRow ? vendorName(grnRow.vendor_id) + ' · ' + (grnRow.receiving_book_ref||'no bill no') : ''}</p>
       ${rows}
       <div class="modal-total">Grand Total: ${grandTotal}</div>
       ${varianceHtml}
