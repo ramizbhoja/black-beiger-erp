@@ -833,7 +833,7 @@
         if(!(key in variantCache)) variantCache[key] = await getOrCreateVariant(a.code, a.size);
       }
       const rows = allocations.map(a => ({
-        grn_id: a.grn_id, material_id: variantCache[a.code+'-'+a.size], counted_quantity: a.qty, entry_method: 'bulk_finalize', entered_by: me.id
+        grn_id: a.grn_id, material_id: variantCache[a.code+'-'+a.size], counted_quantity: a.qty, entry_method: 'bulk_finalize', entered_by: me.id, raw_sku: a.code+'-'+a.size
       }));
       const { error: e1 } = await sb.from('grn_counted_lines').insert(rows);
       if(e1){ alert('Could not save lines: ' + e1.message); return; }
@@ -1538,7 +1538,7 @@
     const swapHtml = swaps.map(s => `
       <div class="list-item" style="border-color:var(--bb-brass); background:#FBF6EE;">
         <span style="font-size:12.5px;">${s.from} doesn't match anything on the Book, and ${s.to} is missing entirely — same qty (${s.qty}) on every size. Likely the same code, mislabeled.</span>
-        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="applyCodeSwap(this, '${s.from}', '${s.to}')">Relabel all ${s.from} → ${s.to}</button>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="applyCodeSwap(this, '${s.from}', '${s.to}')">Count all ${s.from} scans as ${s.to}</button>
       </div>
     `).join('');
 
@@ -1563,10 +1563,10 @@
               <b>${r.code}</b> — Excel ${r.excelQty}, not on the Book<br>
               <b>${targetRow.code}</b> — Book ${targetRow.bookQty}, nothing scanned yet
             </div>
-            <p style="font-size:11.5px; color:var(--bb-ink-muted); margin:4px 0 6px;">These are probably the same code — relabel ${r.code} to:</p>
+            <p style="font-size:11.5px; color:var(--bb-ink-muted); margin:4px 0 6px;">These are probably the same code — count ${r.code} scans as:</p>
             <input type="text" class="code-fix" data-orig="${r.code}" value="${targetRow.code}"
               oninput="validateCodeFix(this)" style="margin-bottom:0; text-transform:uppercase; border-color:var(--bb-sage); background:#F0F7F1;">
-            ${gap !== 0 ? `<p style="font-size:11px; color:var(--bb-rust); margin:6px 0 0;">Even after relabeling, that's still ${Math.abs(gap)} ${gap>0?'short of':'over'} the Book's ${targetRow.bookQty} — will still show as a real variance later, not hidden.</p>` : ''}
+            ${gap !== 0 ? `<p style="font-size:11px; color:var(--bb-rust); margin:6px 0 0;">Even counted this way, that's still ${Math.abs(gap)} ${gap>0?'short of':'over'} the Book's ${targetRow.bookQty} — will still show as a real variance later, not hidden.</p>` : ''}
           </div>
         `);
       } else {
@@ -1638,13 +1638,14 @@
       const unresolvedRows = [];
       for(const { code, size, qty } of pendingExcelParsed){
         const finalCode = pendingExcelCodeRelabels[code] || code;
+        const rawSku = code+'-'+size; // exactly as scanned, before any Book-linking
         if(!currentExcelValidCodes.includes(finalCode)){
-          unresolvedRows.push({ grn_id: grnId, raw_sku: code+'-'+size, raw_code: code, size, quantity: qty, entered_by: me.id });
+          unresolvedRows.push({ grn_id: grnId, raw_sku: rawSku, raw_code: code, size, quantity: qty, entered_by: me.id });
           continue;
         }
         try{
           const variantId = await getOrCreateVariant(finalCode, size);
-          localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: finalCode+'-'+size });
+          localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: finalCode+'-'+size, rawSku });
           added++;
         }catch(err){ errors.push(finalCode+'-'+size+' ('+err.message+')'); }
       }
@@ -1697,7 +1698,7 @@
       const usesRecountFn = isPostedRecount || isEarlyCount;
 
       const rows = localCountedLines.map(l => ({
-        grn_id: selectedDetailGrn, material_id: l.material_id, counted_quantity: l.qty, entry_method: l.method, entered_by: me.id
+        grn_id: selectedDetailGrn, material_id: l.material_id, counted_quantity: l.qty, entry_method: l.method, entered_by: me.id, raw_sku: l.rawSku || l.label
       }));
       const { error: e1 } = await sb.from('grn_counted_lines').insert(rows);
       if(e1){ alert('Could not save lines: ' + e1.message); return; }
@@ -2049,7 +2050,7 @@
           <div class="top"><span>Read as: ${u.raw_sku}</span><span class="mono">${u.quantity}</span></div>
           <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
             <input type="text" id="resolve-code-${u.id}" value="${u.raw_code}" style="flex:1; margin-bottom:0; text-transform:uppercase;">
-            <button class="btn btn-secondary btn-sm" onclick="resolveUnresolvedLine('${u.id}', '${grnId}', '${u.size}', ${u.quantity})">Resolve</button>
+            <button class="btn btn-secondary btn-sm" onclick="resolveUnresolvedLine('${u.id}', '${grnId}', '${u.size}', ${u.quantity}, '${u.raw_sku}')">Resolve</button>
           </div>
         </div>
       `).join('')}
@@ -2069,7 +2070,7 @@
     `;
   }
 
-  async function resolveUnresolvedLine(id, grnId, size, qty){
+  async function resolveUnresolvedLine(id, grnId, size, qty, rawSku){
     const input = document.getElementById('resolve-code-' + id);
     const code = input.value.trim().toUpperCase();
     const isKnown = refData.materials.some(m => m.category === 'stock' && m.base_item_code === code);
@@ -2079,7 +2080,7 @@
     try{
       const variantId = await getOrCreateVariant(code, size);
       const { error: e1 } = await sb.from('grn_counted_lines').insert({
-        grn_id: grnId, material_id: variantId, counted_quantity: qty, entry_method: 'excel_upload', entered_by: me.id
+        grn_id: grnId, material_id: variantId, counted_quantity: qty, entry_method: 'excel_upload', entered_by: me.id, raw_sku: rawSku
       });
       if(e1){ alert('Could not add counted line: ' + e1.message); return; }
       const { error: e2 } = await sb.from('grn_unresolved_lines').update({
