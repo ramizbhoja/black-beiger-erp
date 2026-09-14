@@ -246,6 +246,60 @@
     inlineSuccessCallback = null;
     if(cb) cb();
   }
+  function showInfoModal(title, bodyHtml){
+    document.getElementById('infoModalTitle').textContent = title;
+    document.getElementById('infoModalBody').innerHTML = bodyHtml;
+    document.getElementById('infoModalBackdrop').classList.add('open');
+  }
+  function closeInfoModal(){
+    document.getElementById('infoModalBackdrop').classList.remove('open');
+  }
+
+  // Click-through from any ledger row back to the original evidence —
+  // the photo, who approved it and when, and the SKU breakdown/recount
+  // behind that number, so a doubted entry can always be checked.
+  async function openLedgerEntryDetail(grnId){
+    if(!grnId) return;
+    showInfoModal('Loading…', '<div class="loading">Loading…</div>');
+
+    const [{ data: grn, error: eGrn }, { data: approvals }, { data: recvLines }, { data: countedLines }] = await Promise.all([
+      sb.from('grn').select('*').eq('id', grnId).single(),
+      sb.from('grn_approvals').select('*').eq('grn_id', grnId).order('acted_at', { ascending:true }),
+      sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grnId),
+      sb.from('grn_counted_lines').select('material_id, counted_quantity').eq('grn_id', grnId),
+    ]);
+    if(eGrn){ showInfoModal('Error', `<div class="empty">${eGrn.message}</div>`); return; }
+
+    let photoHtml = '<div class="empty">No photo attached.</div>';
+    if(grn.slip_photo_url){
+      const { data: signed, error: eSign } = await sb.storage.from('receiving-slips').createSignedUrl(grn.slip_photo_url, 3600);
+      photoHtml = eSign
+        ? `<div class="empty">Could not load photo: ${eSign.message}</div>`
+        : `<img src="${signed.signedUrl}" style="width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1.5px solid var(--bb-line); margin-bottom:12px; background:#000;">`;
+    }
+
+    const approvalsHtml = (approvals||[]).length
+      ? `<div class="table-scroll"><table><tr><th>Step</th><th>By</th><th>When</th></tr>${approvals.map(a=>`<tr><td>${a.step_number}</td><td>${userName(a.approver_user_id)}</td><td>${fmtDate(a.acted_at)}</td></tr>`).join('')}</table></div>`
+      : '<div class="empty">No approval records.</div>';
+
+    const countedTotals = {};
+    (countedLines||[]).forEach(l => {
+      const mat = refData.materials.find(m => m.id === l.material_id);
+      const label = mat ? mat.sku : l.material_id;
+      countedTotals[label] = (countedTotals[label]||0) + Number(l.counted_quantity);
+    });
+
+    const body = `
+      <p style="font-size:12.5px; color:var(--bb-ink-muted); margin-top:0;">${grn.receiving_book_ref||'no bill no'} · ${fmtDate(grn.entry_date || grn.created_at)} · logged by ${userName(grn.created_by)}</p>
+      ${photoHtml}
+      <h4>Approvals</h4>
+      ${approvalsHtml}
+      ${(recvLines||[]).length ? `<h4>Receiving Book</h4><div class="table-scroll"><table><tr><th>Code</th><th>Qty</th></tr>${recvLines.map(l=>`<tr><td>${l.base_item_code}</td><td>${l.quantity}</td></tr>`).join('')}</table></div>` : ''}
+      ${Object.keys(countedTotals).length ? `<h4>Physical Recount</h4><div class="table-scroll"><table><tr><th>SKU</th><th>Qty</th></tr>${Object.entries(countedTotals).map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('')}</table></div>` : ''}
+    `;
+    showInfoModal(vendorName(grn.vendor_id), body);
+  }
+
   function showConfirmModal(title, bodyHtml, onConfirm, confirmLabel){
     document.getElementById('modalTitle').textContent = title;
     document.getElementById('modalBody').innerHTML = bodyHtml;
@@ -529,7 +583,7 @@
         balance += r.quantity_delta;
         const hasCost = r.unit_cost !== null && r.unit_cost !== undefined;
         if(hasCost) value += r.quantity_delta * r.unit_cost; else missingCost++;
-        return `<tr><td>${fmtDate(r.posted_at)}</td><td>${r.source_type}</td><td>${vendorName(r.vendor_id)}</td>
+        return `<tr style="cursor:pointer;" onclick="openLedgerEntryDetail('${r.source_id}')"><td>${fmtDate(r.posted_at)}</td><td>${r.source_type}</td><td>${vendorName(r.vendor_id)}</td>
           <td class="variance ${r.quantity_delta>=0?'zero':'nonzero'}">${r.quantity_delta>0?'+':''}${r.quantity_delta}</td>
           <td>${hasCost ? r.unit_cost : '—'}</td><td>${hasCost ? (r.quantity_delta*r.unit_cost).toLocaleString() : '—'}</td><td>${balance}</td></tr>`;
       }).join('');
@@ -562,7 +616,7 @@
       const rs = rows.filter(r => r.vendor_id === vid);
       const totalQty = rs.reduce((s,r) => s+r.quantity_delta, 0);
       const totalValue = rs.reduce((s,r) => s + (r.unit_cost ? r.quantity_delta*r.unit_cost : 0), 0);
-      const trs = rs.map(r => `<tr><td>${fmtDate(r.posted_at)}</td><td>${keyOf(r)}</td>
+      const trs = rs.map(r => `<tr style="cursor:pointer;" onclick="openLedgerEntryDetail('${r.source_id}')"><td>${fmtDate(r.posted_at)}</td><td>${keyOf(r)}</td>
           <td class="variance ${r.quantity_delta>=0?'zero':'nonzero'}">${r.quantity_delta>0?'+':''}${r.quantity_delta}</td>
           <td>${r.unit_cost ?? '—'}</td><td>${r.unit_cost ? (r.quantity_delta*r.unit_cost).toLocaleString() : '—'}</td></tr>`).join('');
       return `<h4>${vendorName(vid)}</h4>
@@ -2086,6 +2140,15 @@
     }
   }
 </script>
+<div class="modal-backdrop" id="infoModalBackdrop">
+  <div class="modal-box">
+    <h3 id="infoModalTitle"></h3>
+    <div id="infoModalBody"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" style="flex:1;" onclick="closeInfoModal()">Close</button>
+    </div>
+  </div>
+</div>
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal-box">
     <h3 id="modalTitle"></h3>
