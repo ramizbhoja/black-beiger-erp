@@ -1322,7 +1322,7 @@
           <input type="number" id="countedQty">
           <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('stock')">+ Add line</button>
           <h4>Or upload an Excel</h4>
-          <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(this, ${JSON.stringify(allowedCodes)})">
+          <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(this)">
         `;
       }
     } else {
@@ -1387,28 +1387,22 @@
   }
   function removeLocalCountedLine(idx){ localCountedLines.splice(idx,1); renderAddDetailsForm(); }
 
-  async function handleExcelUpload(input, allowedCodes){
+  let pendingExcelTally = null;
+  let pendingExcelMatch = null;
+
+  async function handleExcelUpload(input){
     const file = input.files[0];
     if(!file) return;
     try{
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type:'array' });
 
-      // No allowedCodes means this is an early count, before the approver
-      // has entered a breakdown to constrain against — fall back to the
-      // full known stock catalog instead.
-      const isEarlyMode = !allowedCodes;
-      const validCodes = isEarlyMode
-        ? Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)))
-        : allowedCodes;
-
       // Every sheet, one column, no header — one row per physically scanned
       // unit (e.g. 8 rows reading "1155-39" means qty 8, not one row saying
       // qty=8). Tally occurrences across every sheet in the file.
       const skuTally = {};
       wb.SheetNames.forEach(sheetName => {
-        const sheet = wb.Sheets[sheetName];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header:1 });
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header:1 });
         rows.forEach(row => {
           const raw = row[0];
           if(!raw) return;
@@ -1420,32 +1414,92 @@
 
       if(Object.keys(skuTally).length === 0){ alert('No valid SKU rows found in the file'); input.value=''; return; }
 
-      // Split each tallied SKU into code + size, matching against the valid
-      // code list. Some exports omit the "LS" prefix on the value itself
-      // (e.g. "1155-39" instead of "LS1155-39") — try both forms before
-      // giving up on a code.
-      const matched = {};
-      const unmatched = [];
-      Object.entries(skuTally).forEach(([sku, qty]) => {
-        const m = sku.match(/^(.+)-(\d+)$/);
-        let code = m[1], size = m[2];
-        if(!validCodes.includes(code) && validCodes.includes('LS'+code)) code = 'LS'+code;
-        if(!validCodes.includes(code)){ unmatched.push({ sku, qty }); return; }
-        matched[code+'-'+size] = { code, size, qty };
-      });
+      pendingExcelTally = skuTally;
+      input.value = '';
+      await showExcelVendorPicker();
+    } catch(err) {
+      alert('Could not read this file: ' + err.message + '. Check it\'s a genuine Excel/CSV file and try again.');
+      input.value = '';
+      pendingExcelTally = null;
+    }
+  }
 
-      if(Object.keys(matched).length === 0){
-        alert(isEarlyMode
-          ? 'None of the SKUs in this file matched a known stock code. Check the file for typos.'
-          : 'None of the SKUs in this file are on this delivery\'s Receiving Book. Check the file, or confirm you picked the right delivery.');
-        input.value = '';
-        return;
-      }
+  // Step 2: after the file is read, ask which delivery it belongs to —
+  // decided after upload, not locked in by whatever happened to be
+  // selected on the page beforehand.
+  async function showExcelVendorPicker(){
+    const [{ data: intakeData }, { data: recountData }, { data: earlyData }] = await Promise.all([
+      sb.from('grn').select('*').eq('status','intake').eq('grn_type','stock').order('created_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').order('created_at', { ascending:false }),
+    ]);
+    const options = [...(intakeData||[]), ...(recountData||[]), ...(earlyData||[])];
+    if(options.length === 0){
+      alert('No stock deliveries available to attach this file to.');
+      pendingExcelTally = null;
+      return;
+    }
+    const body = `
+      <label>Which delivery does this belong to?</label>
+      <select id="excelVendorPick">${options.map(g => `<option value="${g.id}">${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}</option>`).join('')}</select>
+    `;
+    showConfirmModal('Select Delivery', body, confirmExcelVendorPick, 'Continue');
+  }
 
-      // Add straight to the lines list — no separate popup to confirm
-      // here. "Lines so far" already shows everything, and Submit for
-      // Approval is still the one real confirmation before anything is
-      // written to the database.
+  // Step 3: match the tallied SKUs against that specific delivery's known
+  // codes (its own breakdown if it has one yet, otherwise the full known
+  // catalog), then show the exact SKU+size summary before anything is added.
+  async function confirmExcelVendorPick(){
+    const grnId = document.getElementById('excelVendorPick').value;
+    const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
+    if(error){ alert('Could not load that delivery: ' + error.message); pendingExcelTally = null; return; }
+
+    const { data: recvLines } = await sb.from('grn_receiving_lines').select('base_item_code').eq('grn_id', grnId);
+    const breakdownCodes = Array.from(new Set((recvLines||[]).map(l => l.base_item_code)));
+    const validCodes = breakdownCodes.length
+      ? breakdownCodes
+      : Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)));
+
+    const matched = {};
+    const unmatched = [];
+    Object.entries(pendingExcelTally).forEach(([sku, qty]) => {
+      const m = sku.match(/^(.+)-(\d+)$/);
+      let code = m[1], size = m[2];
+      if(!validCodes.includes(code) && validCodes.includes('LS'+code)) code = 'LS'+code;
+      if(!validCodes.includes(code)){ unmatched.push({ sku, qty }); return; }
+      matched[code+'-'+size] = { code, size, qty };
+    });
+
+    if(Object.keys(matched).length === 0){
+      alert('None of the SKUs in this file matched a known code for this delivery.');
+      pendingExcelTally = null;
+      return;
+    }
+
+    const summaryRows = Object.entries(matched).map(([sku,{qty}]) =>
+      `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${sku}</span><span class="mono">${qty}</span></div></div>`
+    ).join('');
+    const grandTotal = Object.values(matched).reduce((s,{qty})=>s+qty, 0);
+    const unmatchedHtml = unmatched.length ? `
+      <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">Not matched — skipped:</p>
+      <ul style="font-size:12.5px; color:var(--bb-rust);">${unmatched.map(u=>`<li>${u.sku} × ${u.qty}</li>`).join('')}</ul>
+    ` : '';
+
+    pendingExcelMatch = { grnId, matched };
+    showConfirmModal('Confirm Summary — ' + vendorName(grn.vendor_id), `
+      ${summaryRows}
+      <div class="modal-total">Total: ${grandTotal}</div>
+      ${unmatchedHtml}
+    `, finalizeExcelImport);
+  }
+
+  // Step 4: only now does anything actually get added to the lines list.
+  async function finalizeExcelImport(){
+    if(!pendingExcelMatch) return;
+    const { grnId, matched } = pendingExcelMatch;
+    try{
+      selectedDetailGrn = grnId;
+      localCountedLines = [];
       let added = 0;
       const errors = [];
       for(const { code, size, qty } of Object.values(matched)){
@@ -1455,16 +1509,13 @@
           added++;
         }catch(err){ errors.push(code+'-'+size+' ('+err.message+')'); }
       }
-
-      input.value = '';
-      let msg = 'Added ' + added + ' line(s) from the file.';
-      if(unmatched.length) msg += ' Skipped (' + (isEarlyMode ? 'not a known code' : "not on this delivery's Receiving Book") + '): ' + unmatched.map(u=>u.sku).join(', ') + '.';
-      if(errors.length) msg += ' Errors: ' + errors.join(', ') + '.';
-      alert(msg);
-      renderAddDetailsForm();
+      if(errors.length) alert('Added ' + added + ' line(s). Errors: ' + errors.join(', '));
+      await renderBoy();
     } catch(err) {
-      alert('Could not read this file: ' + err.message + '. Check it\'s a genuine Excel/CSV file and try again.');
-      input.value = '';
+      alert('Something went wrong adding these lines: ' + err.message);
+    } finally {
+      pendingExcelTally = null;
+      pendingExcelMatch = null;
     }
   }
 
