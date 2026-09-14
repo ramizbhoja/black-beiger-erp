@@ -1302,6 +1302,8 @@
         <label>Qty</label>
         <input type="number" id="countedQty">
         <button class="btn btn-secondary btn-sm" onclick="addLocalCountedLine('stock', true)">+ Add line</button>
+        <h4>Or upload an Excel</h4>
+        <input type="file" id="excelUpload" accept=".xlsx,.xls,.csv" onchange="handleExcelUpload(this)">
       `;
     } else if(grn.grn_type === 'stock'){
       // Only the codes actually on THIS delivery's breakdown (entered by
@@ -1390,6 +1392,14 @@
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type:'array' });
 
+    // No allowedCodes means this is an early count, before the approver
+    // has entered a breakdown to constrain against — fall back to the
+    // full known stock catalog instead.
+    const isEarlyMode = !allowedCodes;
+    const validCodes = isEarlyMode
+      ? Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)))
+      : allowedCodes;
+
     // Every sheet, one column, no header — one row per physically scanned
     // unit (e.g. 8 rows reading "1155-39" means qty 8, not one row saying
     // qty=8). Tally occurrences across every sheet in the file.
@@ -1408,22 +1418,24 @@
 
     if(Object.keys(skuTally).length === 0){ alert('No valid SKU rows found in the file'); input.value=''; return; }
 
-    // Split each tallied SKU into code + size, matching against this
-    // delivery's Receiving Book codes. Some exports omit the "LS" prefix
-    // on the value itself (e.g. "1155-39" instead of "LS1155-39") — try
-    // both forms before giving up on a code.
+    // Split each tallied SKU into code + size, matching against the valid
+    // code list. Some exports omit the "LS" prefix on the value itself
+    // (e.g. "1155-39" instead of "LS1155-39") — try both forms before
+    // giving up on a code.
     const matched = {};
     const unmatched = [];
     Object.entries(skuTally).forEach(([sku, qty]) => {
       const m = sku.match(/^(.+)-(\d+)$/);
       let code = m[1], size = m[2];
-      if(!allowedCodes.includes(code) && allowedCodes.includes('LS'+code)) code = 'LS'+code;
-      if(!allowedCodes.includes(code)){ unmatched.push({ sku, qty }); return; }
+      if(!validCodes.includes(code) && validCodes.includes('LS'+code)) code = 'LS'+code;
+      if(!validCodes.includes(code)){ unmatched.push({ sku, qty }); return; }
       matched[code+'-'+size] = { code, size, qty };
     });
 
     if(Object.keys(matched).length === 0){
-      alert('None of the SKUs in this file are on this delivery\'s Receiving Book. Check the file, or confirm you picked the right delivery.');
+      alert(isEarlyMode
+        ? 'None of the SKUs in this file matched a known stock code. Check the file for typos.'
+        : 'None of the SKUs in this file are on this delivery\'s Receiving Book. Check the file, or confirm you picked the right delivery.');
       input.value = '';
       return;
     }
@@ -1436,7 +1448,7 @@
       `<div class="list-item" style="cursor:default; padding:8px 12px; margin-bottom:6px;"><div class="top"><span>${code}</span><span class="mono">${qty}</span></div></div>`
     ).join('');
     const unmatchedHtml = unmatched.length ? `
-      <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">Not on this delivery's Receiving Book — skipped:</p>
+      <p style="color:var(--bb-rust); font-weight:700; font-size:12px; margin-top:10px;">${isEarlyMode ? 'Not a known stock code' : "Not on this delivery's Receiving Book"} — skipped:</p>
       <ul style="font-size:12.5px; color:var(--bb-rust);">${unmatched.map(u=>`<li>${u.sku} × ${u.qty}</li>`).join('')}</ul>
     ` : '';
 
