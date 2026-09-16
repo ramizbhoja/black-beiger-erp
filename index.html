@@ -1785,13 +1785,44 @@
   async function renderApprover(){
     const el = document.getElementById('panel-approver');
     el.innerHTML = '<div class="loading">Loading...</div>';
-    const [{ data: queue, error: e1 }, { data: recountQueue, error: e2 }] = await Promise.all([
+    const [{ data: queue, error: e1 }, { data: recountQueue, error: e2 }, { data: correctionRequests, error: e3 }] = await Promise.all([
       sb.from('grn').select('*').eq('status','submitted').order('submitted_at', { ascending:true }),
       sb.from('grn').select('*').eq('status','posted').eq('recount_status','submitted').order('posted_at', { ascending:true }),
+      sb.from('grn_breakdown_correction_requests').select('*').eq('status','pending').order('requested_at', { ascending:true }),
     ]);
-    if(e1 || e2){ el.innerHTML = `<div class="card2"><div class="empty">Could not load queue: ${(e1||e2).message}</div></div>`; return; }
+    if(e1 || e2 || e3){ el.innerHTML = `<div class="card2"><div class="empty">Could not load queue: ${(e1||e2||e3).message}</div></div>`; return; }
+
+    let correctionGrnMap = {};
+    if(correctionRequests && correctionRequests.length){
+      const ids = Array.from(new Set(correctionRequests.map(r => r.grn_id)));
+      const { data: grns } = await sb.from('grn').select('id, vendor_id, receiving_book_ref').in('id', ids);
+      (grns||[]).forEach(g => { correctionGrnMap[g.id] = g; });
+    }
+    const correctionsHtml = (correctionRequests && correctionRequests.length) ? `
+      <div class="card2">
+        <h3>Pending Breakdown Corrections</h3>
+        <p class="section-note">Someone believes the original breakdown had the wrong code. A different approver must review before the Ledger changes.</p>
+        ${correctionRequests.map(r => {
+          const g = correctionGrnMap[r.grn_id];
+          const sameUser = me.id === r.requested_by;
+          return `
+          <div class="list-item">
+            <div class="top"><b>${g ? vendorName(g.vendor_id) : ''}</b><span class="mono">${r.quantity} units</span></div>
+            <div class="meta">${g ? (g.receiving_book_ref||'no bill no') : ''} · ${r.wrong_code} → ${r.correct_code} · requested by ${userName(r.requested_by)}</div>
+            <div class="meta">"${r.reason}"</div>
+            ${sameUser ? '<div class="meta" style="color:var(--bb-rust);">You requested this — a teammate needs to review it.</div>' : `
+              <div style="display:flex; gap:8px; margin-top:8px;">
+                <button class="btn" style="background:transparent; border:1.5px solid var(--bb-rust); color:var(--bb-rust);" onclick="reviewBreakdownCorrection('${r.id}', false)">Reject</button>
+                <button class="btn" style="background:var(--bb-sage); color:#fff;" onclick="reviewBreakdownCorrection('${r.id}', true)">Approve & Correct Ledger</button>
+              </div>
+            `}
+          </div>`;
+        }).join('')}
+      </div>
+    ` : '';
 
     el.innerHTML = `
+      ${correctionsHtml}
       <div class="card2">
         <h3>Look Up a Delivery</h3>
         <p class="section-note">Find any posted delivery by vendor and bill number, and adjust its recount directly — even if nothing was flagged.</p>
@@ -2048,8 +2079,9 @@
               <option value="picked_before_count">Picked before count</option>
               <option value="wrong_labeling">Code mix-up</option>
               <option value="other">Other</option>
-            </select>` : '-'}</td></tr>`).join('')}
+            </select><br><a href="javascript:void(0)" onclick="showFlagBreakdownForm('${grnId}', '${r.base_item_code}')" style="font-size:11px;">Flag the breakdown itself as wrong</a>` : '-'}</td></tr>`).join('')}
       </table></div>
+      <div id="flagBreakdownFormArea"></div>
     `;
 
     const unresolvedGroups = {};
@@ -2195,7 +2227,10 @@
         <td>${r.receiving_total}</td>
         <td>${r.counted_total}</td>
         <td class="variance ${Number(r.variance)===0?'zero':'nonzero'}">${r.variance>0?'+':''}${r.variance}</td>
-        <td><button class="btn btn-secondary btn-sm" onclick="showAdjustForm('${grnId}', '${r.base_item_code}')">Adjust</button></td>
+        <td>
+          <button class="btn btn-secondary btn-sm" onclick="showAdjustForm('${grnId}', '${r.base_item_code}')">Adjust</button>
+          <br><a href="javascript:void(0)" onclick="showFlagBreakdownForm('${grnId}', '${r.base_item_code}')" style="font-size:11px;">Flag breakdown as wrong</a>
+        </td>
       </tr>
     `).join('');
 
@@ -2207,6 +2242,7 @@
         <p class="section-note">Adjustments add a new correction line — nothing is deleted or overwritten, so the original scan is always still there.</p>
         <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Recounted</th><th>Δ</th><th></th></tr>${tableRows}</table></div>
         <div id="adjustFormArea"></div>
+        <div id="flagBreakdownFormArea"></div>
       </div>
     `;
   }
@@ -2248,6 +2284,71 @@
       writeInFlight = false;
     }
   }
+
+  // ---------- BREAKDOWN CORRECTION: flagging that the Ledger's original breakdown was wrong ----------
+  function showFlagBreakdownForm(grnId, wrongCode){
+    const area = document.getElementById('flagBreakdownFormArea');
+    if(!area) return;
+    area.innerHTML = `
+      <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2; margin-top:10px;">
+        <div class="top"><b>Flag ${wrongCode} as wrong on the breakdown</b></div>
+        <p class="section-note">This creates a request a different approver must review — nothing changes on the Ledger until they approve it.</p>
+        <label>What should it actually be?</label>
+        <input type="text" id="flagCorrectCode" style="text-transform:uppercase;" placeholder="e.g. LS677">
+        <label>Reason</label>
+        <input type="text" id="flagReason" placeholder="e.g. rechecked the photo, it's clearly LS677">
+        <button class="btn btn-primary btn-sm" style="margin-top:6px;" onclick="submitFlagBreakdownRequest('${grnId}', '${wrongCode}')">Submit Request</button>
+      </div>
+    `;
+  }
+
+  async function submitFlagBreakdownRequest(grnId, wrongCode){
+    const correctCode = document.getElementById('flagCorrectCode').value.trim().toUpperCase();
+    const reason = document.getElementById('flagReason').value.trim();
+    if(!correctCode){ alert('Enter the correct code'); return; }
+    if(!reason){ alert('Enter a reason'); return; }
+    const isKnown = refData.materials.some(m => m.category === 'stock' && m.base_item_code === correctCode);
+    if(!isKnown){ alert('Not a known SKU: ' + correctCode); return; }
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      const { error } = await sb.rpc('request_breakdown_correction', {
+        p_grn_id: grnId, p_wrong_code: wrongCode, p_correct_code: correctCode, p_requester_id: me.id, p_reason: reason
+      });
+      if(error){ alert('Could not submit request: ' + error.message); return; }
+      alert('Request submitted — a different approver needs to review it before the Ledger changes.');
+      const area = document.getElementById('flagBreakdownFormArea');
+      if(area) area.innerHTML = '';
+      await renderApprover();
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+    }
+  }
+
+  async function reviewBreakdownCorrection(requestId, approve){
+    let rejectionReason = null;
+    if(!approve){
+      rejectionReason = prompt('Reason for rejecting this correction request:');
+      if(rejectionReason === null) return;
+    }
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      const { data, error } = await sb.rpc('review_breakdown_correction', {
+        p_request_id: requestId, p_reviewer_id: me.id, p_approve: approve, p_rejection_reason: rejectionReason
+      });
+      if(error){ alert('Could not review request: ' + error.message); return; }
+      alert(approve ? 'Approved — the Ledger has been corrected with a reversal and a new entry.' : 'Rejected.');
+      await renderApprover();
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+    }
+  }
+
 
   async function reconcileRecountLive(grnId){
     if(writeInFlight) return;
