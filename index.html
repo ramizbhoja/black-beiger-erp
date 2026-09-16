@@ -1792,6 +1792,16 @@
     if(e1 || e2){ el.innerHTML = `<div class="card2"><div class="empty">Could not load queue: ${(e1||e2).message}</div></div>`; return; }
 
     el.innerHTML = `
+      <div class="card2">
+        <h3>Look Up a Delivery</h3>
+        <p class="section-note">Find any posted delivery by vendor and bill number, and adjust its recount directly — even if nothing was flagged.</p>
+        <div style="display:flex; gap:8px;">
+          <select id="lookupVendor" style="flex:1; margin-bottom:0;"><option value="">Any vendor</option>${refData.vendors.filter(v=>v.category==='stock').map(v=>`<option value="${v.id}">${v.name}</option>`).join('')}</select>
+          <input type="text" id="lookupBillNo" inputmode="numeric" placeholder="Bill no." style="width:110px; margin-bottom:0;">
+          <button class="btn btn-secondary" style="min-height:44px;" onclick="searchDeliveries()">Search</button>
+        </div>
+        <div id="lookupResults" style="margin-top:10px;"></div>
+      </div>
       <div class="grid2">
         <div class="card2">
           <h3>Approval Queue</h3>
@@ -2042,18 +2052,26 @@
       </table></div>
     `;
 
-    const unresolvedHtml = (unresolvedLines && unresolvedLines.length) ? `
+    const unresolvedGroups = {};
+    (unresolvedLines||[]).forEach(u => { (unresolvedGroups[u.raw_code] = unresolvedGroups[u.raw_code] || []).push(u); });
+    Object.entries(unresolvedGroups).forEach(([rawCode, lines]) => { pendingUnresolvedGroups[rawCode] = { grnId, lines }; });
+
+    const unresolvedHtml = Object.keys(unresolvedGroups).length ? `
       <h4>Unresolved from the Boy's Excel Upload</h4>
-      <p class="section-note">He couldn't match these to a known SKU — check the photo and resolve each here.</p>
-      ${unresolvedLines.map(u => `
+      <p class="section-note">He couldn't match these to a known SKU — check the photo and resolve each group here.</p>
+      ${Object.entries(unresolvedGroups).map(([rawCode, lines]) => {
+        const totalQty = lines.reduce((s,l) => s + Number(l.quantity), 0);
+        const sizesText = lines.map(l => l.size + '×' + l.quantity).join(', ');
+        return `
         <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">
-          <div class="top"><span>Read as: ${u.raw_sku}</span><span class="mono">${u.quantity}</span></div>
-          <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
-            <input type="text" id="resolve-code-${u.id}" value="${u.raw_code}" style="flex:1; margin-bottom:0; text-transform:uppercase;">
-            <button class="btn btn-secondary btn-sm" onclick="resolveUnresolvedLine('${u.id}', '${grnId}', '${u.size}', ${u.quantity}, '${u.raw_sku}')">Resolve</button>
+          <div class="top"><span>Read as: ${rawCode}</span><span class="mono">${totalQty} total</span></div>
+          <div class="meta" style="margin-bottom:6px;">${lines.length} size(s): ${sizesText}</div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <input type="text" id="resolve-group-${rawCode}" value="${rawCode}" style="flex:1; margin-bottom:0; text-transform:uppercase;">
+            <button class="btn btn-secondary btn-sm" onclick="resolveUnresolvedGroup('${rawCode}')">Resolve All</button>
           </div>
         </div>
-      `).join('')}
+      `;}).join('')}
     ` : '';
 
     document.getElementById('approvalDetail').innerHTML = `
@@ -2068,6 +2086,43 @@
         <button class="btn btn-primary btn-block" ${sameUser?'disabled style="opacity:0.5;"':''} id="reconcileBtn" onclick="reconcileRecountLive('${grnId}')" style="margin-top:12px;">Reconcile</button>
       </div>
     `;
+  }
+
+  let pendingUnresolvedGroups = {};
+
+  async function resolveUnresolvedGroup(rawCode){
+    const group = pendingUnresolvedGroups[rawCode];
+    if(!group) return;
+    const input = document.getElementById('resolve-group-' + rawCode);
+    const code = input.value.trim().toUpperCase();
+    const isKnown = refData.materials.some(m => m.category === 'stock' && m.base_item_code === code);
+    if(!isKnown){ alert('Not a known SKU: ' + code); return; }
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      let resolved = 0;
+      const errors = [];
+      for(const line of group.lines){
+        try{
+          const variantId = await getOrCreateVariant(code, line.size);
+          const { error: e1 } = await sb.from('grn_counted_lines').insert({
+            grn_id: group.grnId, material_id: variantId, counted_quantity: line.quantity, entry_method: 'excel_upload', entered_by: me.id, raw_sku: line.raw_sku
+          });
+          if(e1){ errors.push(line.raw_sku + ': ' + e1.message); continue; }
+          const { error: e2 } = await sb.from('grn_unresolved_lines').update({
+            status: 'resolved', resolved_code: code, resolved_by: me.id, resolved_at: new Date().toISOString()
+          }).eq('id', line.id);
+          if(e2){ errors.push(line.raw_sku + ': ' + e2.message); continue; }
+          resolved++;
+        }catch(err){ errors.push(line.raw_sku + ': ' + err.message); }
+      }
+      if(errors.length) alert('Resolved ' + resolved + ' of ' + group.lines.length + '. Errors: ' + errors.join('; '));
+      await openApprovalDetail(group.grnId);
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+    }
   }
 
   async function resolveUnresolvedLine(id, grnId, size, qty, rawSku){
@@ -2088,6 +2143,105 @@
       }).eq('id', id);
       if(e2){ alert('Counted line added, but could not mark resolved: ' + e2.message); return; }
       await openApprovalDetail(grnId);
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+    }
+  }
+
+  // ---------- DELIVERY LOOKUP (approver can adjust any posted delivery's recount, even without a flagged variance) ----------
+  async function searchDeliveries(){
+    const vendorId = document.getElementById('lookupVendor').value;
+    const billNo = document.getElementById('lookupBillNo').value.trim();
+    const resultsEl = document.getElementById('lookupResults');
+    resultsEl.innerHTML = '<div class="loading">Searching…</div>';
+
+    let query = sb.from('grn').select('*').eq('status','posted').eq('grn_type','stock').order('posted_at', { ascending:false }).limit(25);
+    if(vendorId) query = query.eq('vendor_id', vendorId);
+    if(billNo) query = query.ilike('receiving_book_ref', '%'+billNo+'%');
+
+    const { data, error } = await query;
+    if(error){ resultsEl.innerHTML = `<div class="empty">${error.message}</div>`; return; }
+    if(!data || data.length === 0){ resultsEl.innerHTML = '<div class="empty">No matching posted deliveries.</div>'; return; }
+
+    resultsEl.innerHTML = data.map(g => `
+      <div class="list-item" style="cursor:pointer;" onclick="openDeliveryLookupDetail('${g.id}')">
+        <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge stock">${g.recount_status}</span></div>
+        <div class="meta">${g.receiving_book_ref||'no bill no'} · posted ${fmtDate(g.posted_at)}</div>
+      </div>
+    `).join('');
+  }
+
+  async function openDeliveryLookupDetail(grnId){
+    const resultsEl = document.getElementById('lookupResults');
+    resultsEl.innerHTML = '<div class="loading">Loading…</div>';
+
+    const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
+    if(error){ resultsEl.innerHTML = `<div class="empty">${error.message}</div>`; return; }
+
+    let photoHtml = '<div class="empty">No photo attached.</div>';
+    if(grn.slip_photo_url){
+      const { data: signed, error: eSign } = await sb.storage.from('receiving-slips').createSignedUrl(grn.slip_photo_url, 3600);
+      photoHtml = eSign
+        ? '<div class="empty">Could not load photo.</div>'
+        : `<img src="${signed.signedUrl}" style="width:100%; max-height:220px; object-fit:contain; border-radius:8px; border:1px solid var(--bb-line); margin-bottom:12px; background:#000;">`;
+    }
+
+    const { data: rows } = await sb.from('grn_receiving_vs_scanned_v').select('*').eq('grn_id', grnId);
+    const tableRows = (rows||[]).map(r => `
+      <tr>
+        <td>${r.base_item_code}</td>
+        <td>${r.receiving_total}</td>
+        <td>${r.counted_total}</td>
+        <td class="variance ${Number(r.variance)===0?'zero':'nonzero'}">${r.variance>0?'+':''}${r.variance}</td>
+        <td><button class="btn btn-secondary btn-sm" onclick="showAdjustForm('${grnId}', '${r.base_item_code}')">Adjust</button></td>
+      </tr>
+    `).join('');
+
+    resultsEl.innerHTML = `
+      <div class="card2" style="background:var(--bb-bg);">
+        <h3>${vendorName(grn.vendor_id)} — ${grn.receiving_book_ref||'no bill no'}</h3>
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('lookupResults').innerHTML='';">← Back to results</button>
+        ${photoHtml}
+        <p class="section-note">Adjustments add a new correction line — nothing is deleted or overwritten, so the original scan is always still there.</p>
+        <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Recounted</th><th>Δ</th><th></th></tr>${tableRows}</table></div>
+        <div id="adjustFormArea"></div>
+      </div>
+    `;
+  }
+
+  function showAdjustForm(grnId, code){
+    document.getElementById('adjustFormArea').innerHTML = `
+      <div class="list-item" style="border-color:var(--bb-brass); background:#FBF6EE; margin-top:10px;">
+        <div class="top"><b>Add adjustment for ${code}</b></div>
+        <label>Size</label>
+        <select id="adjustSize">${SIZE_OPTIONS.map(s=>`<option value="${s}">${s}</option>`).join('')}</select>
+        <label>Qty change (negative to subtract)</label>
+        <input type="number" id="adjustDelta" placeholder="e.g. 5 or -3">
+        <label>Reason</label>
+        <input type="text" id="adjustReason" placeholder="e.g. found miscounted units on recheck">
+        <button class="btn btn-primary btn-sm" style="margin-top:6px;" onclick="saveRecountAdjustment('${grnId}', '${code}')">Save Adjustment</button>
+      </div>
+    `;
+  }
+
+  async function saveRecountAdjustment(grnId, code){
+    const size = document.getElementById('adjustSize').value;
+    const delta = Number(document.getElementById('adjustDelta').value);
+    const reason = document.getElementById('adjustReason').value.trim();
+    if(!delta){ alert('Enter a non-zero quantity change'); return; }
+    if(!reason){ alert('Enter a reason for this adjustment'); return; }
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      const variantId = await getOrCreateVariant(code, size);
+      const { error } = await sb.from('grn_counted_lines').insert({
+        grn_id: grnId, material_id: variantId, counted_quantity: delta, entry_method: 'approver_adjustment',
+        entered_by: me.id, raw_sku: code+'-'+size+' (adjustment: '+reason+')'
+      });
+      if(error){ alert('Could not save adjustment: ' + error.message); return; }
+      await openDeliveryLookupDetail(grnId);
     } catch(err) {
       alert('Something went wrong: ' + err.message);
     } finally {
