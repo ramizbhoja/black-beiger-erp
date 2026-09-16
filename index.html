@@ -2069,7 +2069,7 @@
 
     const varianceHtml = `
       <h4>Posted Book vs. Physical Recount</h4>
-      <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Recounted</th><th>Δ</th><th>Reason</th></tr>
+      <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Recounted</th><th>Δ</th><th>Reason</th><th></th></tr>
       ${(rows||[]).map(r => `
         <tr><td>${r.base_item_code}</td><td>${r.receiving_total}</td><td>${r.counted_total}</td>
           <td class="variance ${Number(r.variance)===0?'zero':'nonzero'}">${r.variance>0?'+':''}${r.variance}</td>
@@ -2079,7 +2079,8 @@
               <option value="picked_before_count">Picked before count</option>
               <option value="wrong_labeling">Code mix-up</option>
               <option value="other">Other</option>
-            </select><br><a href="javascript:void(0)" onclick="showFlagBreakdownForm('${grnId}', '${r.base_item_code}')" style="font-size:11px;">Flag the breakdown itself as wrong</a>` : '-'}</td></tr>`).join('')}
+            </select>` : '-'}</td>
+          <td><button class="btn btn-secondary btn-sm" onclick="showFlagBreakdownForm('${grnId}', '${r.base_item_code}')">Edit SKU</button></td></tr>`).join('')}
       </table></div>
       <div id="flagBreakdownFormArea"></div>
     `;
@@ -2229,7 +2230,7 @@
         <td class="variance ${Number(r.variance)===0?'zero':'nonzero'}">${r.variance>0?'+':''}${r.variance}</td>
         <td>
           <button class="btn btn-secondary btn-sm" onclick="showAdjustForm('${grnId}', '${r.base_item_code}')">Adjust</button>
-          <br><a href="javascript:void(0)" onclick="showFlagBreakdownForm('${grnId}', '${r.base_item_code}')" style="font-size:11px;">Flag breakdown as wrong</a>
+          <button class="btn btn-secondary btn-sm" style="margin-top:4px;" onclick="showFlagBreakdownForm('${grnId}', '${r.base_item_code}')">Edit SKU</button>
         </td>
       </tr>
     `).join('');
