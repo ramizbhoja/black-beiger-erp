@@ -1925,7 +1925,23 @@
   // ---------- MODE A: approver enters the SKU breakdown from the photo ----------
   let breakdownRowCount = 0;
 
-  function renderBreakdownEntryForm(grn, photoHtml){
+  async function openEditBreakdown(grnId){
+    const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
+    if(error){ alert('Could not load: ' + error.message); return; }
+
+    let photoHtml = '<div class="empty">No photo attached.</div>';
+    if(grn.slip_photo_url){
+      const { data: signed, error: eSign } = await sb.storage.from('receiving-slips').createSignedUrl(grn.slip_photo_url, 3600);
+      photoHtml = eSign
+        ? '<div class="empty">Could not load photo.</div>'
+        : `<img src="${signed.signedUrl}" style="width:100%; max-height:280px; object-fit:contain; border-radius:8px; border:1px solid var(--bb-line); margin-bottom:12px; background:#000;">`;
+    }
+
+    const { data: lines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grnId);
+    renderBreakdownEntryForm(grn, photoHtml, lines || [], true);
+  }
+
+  function renderBreakdownEntryForm(grn, photoHtml, existingLines, isEdit){
     breakdownRowCount = 0;
     document.getElementById('approvalDetail').innerHTML = `
       <div class="card2">
@@ -1933,7 +1949,7 @@
         <div style="font-size:11.5px; color:var(--bb-ink-muted); margin-bottom:10px;">${grn.receiving_book_ref||'no bill no'} . stock . logged by ${userName(grn.created_by)}</div>
         ${photoHtml}
         <div class="list-item" style="cursor:default;">Boy reported total: <b>${grn.total_quantity_reported}</b> — enter the SKU breakdown from the photo above. It must add up to this number exactly.</div>
-        <h4>SKU Breakdown</h4>
+        <h4>${isEdit ? 'Edit SKU Breakdown' : 'SKU Breakdown'}</h4>
         <div style="display:flex; justify-content:center; gap:8px; margin-bottom:8px;">
           <div style="width:150px; flex-shrink:0;"><div class="dyn-field-label" style="text-align:center;">SKU</div></div>
           <div style="width:70px; flex-shrink:0;"><div class="dyn-field-label" style="text-align:center;">Qty</div></div>
@@ -1942,13 +1958,19 @@
         <div id="breakdownRows"></div>
         <button type="button" class="btn btn-secondary btn-sm" onclick="addBreakdownRow()">+ Add another SKU</button>
         <div class="modal-total" id="breakdownTotal" data-target="${grn.total_quantity_reported}" style="margin-top:8px;">Total: 0 / ${grn.total_quantity_reported}</div>
-        <button class="btn btn-primary btn-block" id="saveBreakdownBtn" style="margin-top:10px;" onclick="saveReceivingBreakdown('${grn.id}', ${grn.total_quantity_reported})">Save Breakdown</button>
+        <button class="btn btn-primary btn-block" id="saveBreakdownBtn" style="margin-top:10px;" onclick="${isEdit ? `saveEditedBreakdown('${grn.id}', ${grn.total_quantity_reported})` : `saveReceivingBreakdown('${grn.id}', ${grn.total_quantity_reported})`}">${isEdit ? 'Save Changes' : 'Save Breakdown'}</button>
+        ${isEdit ? `<button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="openApprovalDetail('${grn.id}')">Cancel</button>` : ''}
       </div>
     `;
-    for(let i=0; i<4; i++) addBreakdownRow();
+    if(existingLines && existingLines.length){
+      existingLines.forEach(l => addBreakdownRow(l.base_item_code, l.quantity));
+    } else {
+      for(let i=0; i<4; i++) addBreakdownRow();
+    }
+    updateBreakdownTotal();
   }
 
-  function addBreakdownRow(){
+  function addBreakdownRow(prefillCode, prefillQty){
     breakdownRowCount++;
     const id = 'brow' + breakdownRowCount;
     const div = document.createElement('div');
@@ -1956,16 +1978,17 @@
     div.innerHTML = `
       <div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:5px;">
         <div style="position:relative; width:150px; flex-shrink:0;">
-          <input type="text" inputmode="numeric" class="br-code" style="margin-bottom:0; width:100%; text-align:center;"
+          <input type="text" inputmode="numeric" class="br-code" value="${prefillCode||''}" style="margin-bottom:0; width:100%; text-align:center;"
             oninput="skuInputHandler(this); liveValidateSkuCode(this, 'brstatus${id}')" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
           <div class="sku-dropdown" style="display:none;"></div>
         </div>
         <span id="brstatus${id}" style="font-size:15px; width:16px; text-align:center; flex-shrink:0;"></span>
-        <input type="number" inputmode="numeric" class="br-qty rr-qty" style="width:70px; flex-shrink:0; margin-bottom:0; text-align:center;" oninput="updateBreakdownTotal()">
+        <input type="number" inputmode="numeric" class="br-qty rr-qty" value="${prefillQty||''}" style="width:70px; flex-shrink:0; margin-bottom:0; text-align:center;" oninput="updateBreakdownTotal()">
         <button type="button" class="icon-btn-delete" onclick="removeBreakdownRow('${id}')">✕</button>
       </div>
     `;
     document.getElementById('breakdownRows').appendChild(div);
+    if(prefillCode) liveValidateSkuCode(div.querySelector('.br-code'), 'brstatus'+id);
   }
 
   function liveValidateSkuCode(input, statusElId){
@@ -1993,6 +2016,43 @@
     document.querySelectorAll('#breakdownRows .br-qty').forEach(inp => { const v = Number(inp.value); if(v>0) total += v; });
     const el = document.getElementById('breakdownTotal');
     if(el) el.textContent = `Total: ${total} / ${el.dataset.target}`;
+  }
+
+  async function saveEditedBreakdown(grnId, targetTotal){
+    const lines = [];
+    document.querySelectorAll('#breakdownRows .dyn-row').forEach(row => {
+      const code = row.querySelector('.br-code').value.trim().toUpperCase();
+      const qty = Number(row.querySelector('.br-qty').value);
+      if(code && qty > 0) lines.push({ base_item_code: code, quantity: qty });
+    });
+    if(lines.length === 0){ alert('Add at least one SKU + qty'); return; }
+
+    const stockMaterials = refData.materials.filter(m => m.category === 'stock');
+    const knownCodes = new Set(stockMaterials.map(m => m.base_item_code));
+    const unknownCodes = Array.from(new Set(lines.map(l => l.base_item_code).filter(c => !knownCodes.has(c))));
+    if(unknownCodes.length){
+      alert('Not a known SKU — check for a typo: ' + unknownCodes.join(', '));
+      return;
+    }
+
+    const sum = lines.reduce((s,l) => s + l.quantity, 0);
+    if(sum !== targetTotal){ alert('Your breakdown totals ' + sum + ', but the boy reported ' + targetTotal + '. These must match exactly before saving.'); return; }
+
+    if(writeInFlight) return;
+    writeInFlight = true;
+    const btn = document.getElementById('saveBreakdownBtn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Saving…'; }
+    try{
+      const { error } = await sb.rpc('edit_receiving_breakdown', { p_grn_id: grnId, p_editor_id: me.id, p_lines: lines });
+      if(error){ alert('Could not save changes: ' + error.message); return; }
+      alert('Breakdown updated.');
+      await openApprovalDetail(grnId);
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+      if(btn){ btn.disabled = false; btn.textContent = 'Save Changes'; }
+    }
   }
 
   async function saveReceivingBreakdown(grnId, targetTotal){
@@ -2042,9 +2102,13 @@
     const sameUser = me.id === grn.created_by || me.id === grn.details_entered_by;
 
     let breakdownHtml = '';
+    let breakdownLines = [];
     if(grn.grn_type === 'stock'){
       const { data: lines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grnId);
-      breakdownHtml = `<h4>SKU Breakdown (from photo)</h4><div class="table-scroll"><table><tr><th>Code</th><th>Qty</th></tr>${(lines||[]).map(l=>`<tr><td>${l.base_item_code}</td><td>${l.quantity}</td></tr>`).join('')}</table></div>`;
+      breakdownLines = lines || [];
+      const canEdit = (done||0) === 0;
+      breakdownHtml = `<h4>SKU Breakdown (from photo)</h4><div class="table-scroll"><table><tr><th>Code</th><th>Qty</th></tr>${breakdownLines.map(l=>`<tr><td>${l.base_item_code}</td><td>${l.quantity}</td></tr>`).join('')}</table></div>
+        ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="openEditBreakdown('${grnId}')">Edit Breakdown</button>` : ''}`;
     } else {
       const { data: lines } = await sb.from('grn_counted_lines').select('material_id, counted_quantity').eq('grn_id', grnId);
       const totals = {};
