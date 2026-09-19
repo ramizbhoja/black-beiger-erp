@@ -1827,6 +1827,17 @@
     el.innerHTML = `
       ${correctionsHtml}
       <div class="card2">
+        <h3>New SKU (whole design, all sizes at once)</h3>
+        <p class="section-note">For a brand new shoe design the boy is scanning but doesn't exist yet — creates every checked size in one go, usable immediately.</p>
+        <label>Base Code</label>
+        <input type="text" id="newSkuBaseCode" placeholder="LS998" style="text-transform:uppercase;">
+        <label>Sizes</label>
+        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+          ${SIZE_OPTIONS.map(s => `<label style="display:flex; align-items:center; gap:4px; text-transform:none; font-size:12.5px; margin-bottom:0;"><input type="checkbox" class="new-sku-size" value="${s}" checked style="width:auto; margin-bottom:0;">${s}</label>`).join('')}
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="addNewSkuAllSizes()">Create SKU</button>
+      </div>
+      <div class="card2">
         <h3>Look Up a Delivery</h3>
         <p class="section-note">Find any posted delivery by vendor and bill number, and adjust its recount directly — even if nothing was flagged.</p>
         <div style="display:flex; gap:8px;">
@@ -2580,7 +2591,9 @@
       if(error){ alert('Could not create SKU: ' + error.message); return; }
       document.getElementById('newSkuBaseCode').value = '';
       alert('Created ' + code + ' with ' + checkedSizes.length + ' size(s).');
-      await renderAdmin();
+      await loadReferenceData(); // refData.materials is the shared source every SKU check reads from
+      if(activeTab === 'admin') await renderAdmin();
+      else if(activeTab === 'approver') await renderApprover();
     } catch(err) {
       alert('Something went wrong: ' + err.message);
     } finally {
