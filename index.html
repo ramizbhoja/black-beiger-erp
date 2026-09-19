@@ -1827,15 +1827,18 @@
     el.innerHTML = `
       ${correctionsHtml}
       <div class="card2">
-        <h3>New SKU (whole design, all sizes at once)</h3>
-        <p class="section-note">For a brand new shoe design the boy is scanning but doesn't exist yet — creates every checked size in one go, usable immediately.</p>
-        <label>Base Code</label>
-        <input type="text" id="newSkuBaseCode" placeholder="LS998" style="text-transform:uppercase;">
-        <label>Sizes</label>
-        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
-          ${SIZE_OPTIONS.map(s => `<label style="display:flex; align-items:center; gap:4px; text-transform:none; font-size:12.5px; margin-bottom:0;"><input type="checkbox" class="new-sku-size" value="${s}" checked style="width:auto; margin-bottom:0;">${s}</label>`).join('')}
+        <h3>New SKU</h3>
+        <button class="btn btn-secondary btn-sm" id="newSkuToggleBtn" onclick="toggleNewSkuForm()">+ Add New SKU</button>
+        <div id="newSkuFormArea" style="display:none; margin-top:12px;">
+          <p class="section-note">For a brand new shoe design the boy is scanning but doesn't exist yet — creates every checked size in one go, usable immediately.</p>
+          <label>Base Code</label>
+          <input type="text" id="newSkuBaseCode" placeholder="LS998" style="text-transform:uppercase;">
+          <label>Sizes</label>
+          <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+            ${SIZE_OPTIONS.map(s => `<label style="display:flex; align-items:center; gap:4px; text-transform:none; font-size:12.5px; margin-bottom:0;"><input type="checkbox" class="new-sku-size" value="${s}" checked style="width:auto; margin-bottom:0;">${s}</label>`).join('')}
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="addNewSkuAllSizes()">Create SKU</button>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="addNewSkuAllSizes()">Create SKU</button>
       </div>
       <div class="card2">
         <h3>Look Up a Delivery</h3>
@@ -2469,15 +2472,18 @@
           <h3>Stock Variants</h3>
           <p class="section-note">Usually created automatically when a boy scans a new size. Add here to pre-register one ahead of time.</p>
           <div id="stockVariantsList"></div>
-          <h4>New SKU (whole design, all sizes at once)</h4>
-          <p class="section-note">For a brand new shoe design — creates every checked size in one go.</p>
-          <label>Base Code</label>
-          <input type="text" id="newSkuBaseCode" placeholder="LS998" style="text-transform:uppercase;">
-          <label>Sizes</label>
-          <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
-            ${SIZE_OPTIONS.map(s => `<label style="display:flex; align-items:center; gap:4px; text-transform:none; font-size:12.5px; margin-bottom:0;"><input type="checkbox" class="new-sku-size" value="${s}" checked style="width:auto; margin-bottom:0;">${s}</label>`).join('')}
+          <h4>New SKU</h4>
+          <button class="btn btn-secondary btn-sm" id="newSkuToggleBtn" onclick="toggleNewSkuForm()">+ Add New SKU</button>
+          <div id="newSkuFormArea" style="display:none; margin-top:12px;">
+            <p class="section-note">For a brand new shoe design — creates every checked size in one go.</p>
+            <label>Base Code</label>
+            <input type="text" id="newSkuBaseCode" placeholder="LS998" style="text-transform:uppercase;">
+            <label>Sizes</label>
+            <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+              ${SIZE_OPTIONS.map(s => `<label style="display:flex; align-items:center; gap:4px; text-transform:none; font-size:12.5px; margin-bottom:0;"><input type="checkbox" class="new-sku-size" value="${s}" checked style="width:auto; margin-bottom:0;">${s}</label>`).join('')}
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="addNewSkuAllSizes()">Create SKU</button>
           </div>
-          <button class="btn btn-secondary btn-sm" onclick="addNewSkuAllSizes()">Create SKU</button>
           <h4>Add One Variant</h4>
           <div style="display:flex; gap:8px;">
             <div style="flex:1;"><label>Base Code</label><input type="text" id="newVarCode" placeholder="LS280"></div>
@@ -2574,6 +2580,15 @@
     const { error } = await sb.from('materials').insert({ category:'materials', name, unit });
     if(error){ alert('Could not add: ' + error.message); return; }
     await renderAdmin();
+  }
+
+  function toggleNewSkuForm(){
+    const area = document.getElementById('newSkuFormArea');
+    const btn = document.getElementById('newSkuToggleBtn');
+    if(!area) return;
+    const isHidden = area.style.display === 'none';
+    area.style.display = isHidden ? 'block' : 'none';
+    if(btn) btn.textContent = isHidden ? '− Hide' : '+ Add New SKU';
   }
 
   async function addNewSkuAllSizes(){
