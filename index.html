@@ -1299,10 +1299,13 @@
       if(allowedCodes.length === 0){
         entryFields = `
           <label>SKU (no breakdown entered yet — pick from the full catalog)</label>
-          <div style="position:relative;">
-            <input type="text" inputmode="numeric" id="countedCodeText" style="margin-bottom:0;"
-              oninput="skuInputHandler(this)" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
-            <div class="sku-dropdown" style="display:none;"></div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <div style="position:relative; flex:1;">
+              <input type="text" inputmode="numeric" id="countedCodeText" style="margin-bottom:0; width:100%;"
+                oninput="skuInputHandler(this); liveValidateSkuCode(this, 'countedCodeStatus')" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
+              <div class="sku-dropdown" style="display:none;"></div>
+            </div>
+            <span id="countedCodeStatus" style="font-size:15px; width:16px; text-align:center; flex-shrink:0;"></span>
           </div>
           <label>Size</label>
           <select id="countedSize">${SIZE_OPTIONS.map(s => `<option value="${s}">${s}</option>`).join('')}</select>
@@ -1940,14 +1943,25 @@
       <div style="display:flex; align-items:center; justify-content:center; gap:8px; margin-bottom:5px;">
         <div style="position:relative; width:150px; flex-shrink:0;">
           <input type="text" inputmode="numeric" class="br-code" style="margin-bottom:0; width:100%; text-align:center;"
-            oninput="skuInputHandler(this)" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
+            oninput="skuInputHandler(this); liveValidateSkuCode(this, 'brstatus${id}')" onblur="setTimeout(()=>hideSkuDropdown(this),150)" onfocus="skuInputHandler(this)" autocomplete="off">
           <div class="sku-dropdown" style="display:none;"></div>
         </div>
+        <span id="brstatus${id}" style="font-size:15px; width:16px; text-align:center; flex-shrink:0;"></span>
         <input type="number" inputmode="numeric" class="br-qty rr-qty" style="width:70px; flex-shrink:0; margin-bottom:0; text-align:center;" oninput="updateBreakdownTotal()">
         <button type="button" class="icon-btn-delete" onclick="removeBreakdownRow('${id}')">✕</button>
       </div>
     `;
     document.getElementById('breakdownRows').appendChild(div);
+  }
+
+  function liveValidateSkuCode(input, statusElId){
+    const code = input.value.trim().toUpperCase();
+    const statusEl = document.getElementById(statusElId);
+    if(!statusEl) return;
+    if(!code){ statusEl.textContent = ''; return; }
+    const isKnown = refData.materials.some(m => m.category === 'stock' && m.base_item_code === code);
+    statusEl.textContent = isKnown ? '✓' : '✕';
+    statusEl.style.color = isKnown ? 'var(--bb-sage)' : 'var(--bb-rust)';
   }
 
   function removeBreakdownRow(id){
@@ -2398,13 +2412,13 @@
 
   async function loadAdminData(){
     const [{data:v}, {data:m}, {data:r}] = await Promise.all([
-      sb.from('vendors').select('*').order('name'),
-      sb.from('materials').select('*').order('name'),
+      fetchAllRows('vendors'),
+      fetchAllRows('materials'),
       sb.from('approval_matrix').select('*').order('applies_to').order('vendor_id').order('step_number')
     ]);
-    adminData.vendors = v || [];
-    adminData.materialTypes = (m || []).filter(x => x.category === 'materials');
-    adminData.stockVariants = (m || []).filter(x => x.category === 'stock');
+    adminData.vendors = (v || []).sort((a,b) => a.name.localeCompare(b.name));
+    adminData.materialTypes = (m || []).filter(x => x.category === 'materials').sort((a,b) => a.name.localeCompare(b.name));
+    adminData.stockVariants = (m || []).filter(x => x.category === 'stock').sort((a,b) => a.name.localeCompare(b.name));
     adminData.rules = r || [];
   }
 
@@ -2413,6 +2427,7 @@
     el.innerHTML = '<div class="loading">Loading...</div>';
     await loadAdminData();
     refData.vendors = adminData.vendors; // keep the rest of the app in sync with any changes made here
+    refData.materials = [...adminData.materialTypes, ...adminData.stockVariants];
 
     el.innerHTML = `
       <div class="grid2">
@@ -2443,7 +2458,16 @@
           <h3>Stock Variants</h3>
           <p class="section-note">Usually created automatically when a boy scans a new size. Add here to pre-register one ahead of time.</p>
           <div id="stockVariantsList"></div>
-          <h4>Add Variant</h4>
+          <h4>New SKU (whole design, all sizes at once)</h4>
+          <p class="section-note">For a brand new shoe design — creates every checked size in one go.</p>
+          <label>Base Code</label>
+          <input type="text" id="newSkuBaseCode" placeholder="LS998" style="text-transform:uppercase;">
+          <label>Sizes</label>
+          <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+            ${SIZE_OPTIONS.map(s => `<label style="display:flex; align-items:center; gap:4px; text-transform:none; font-size:12.5px; margin-bottom:0;"><input type="checkbox" class="new-sku-size" value="${s}" checked style="width:auto; margin-bottom:0;">${s}</label>`).join('')}
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="addNewSkuAllSizes()">Create SKU</button>
+          <h4>Add One Variant</h4>
           <div style="display:flex; gap:8px;">
             <div style="flex:1;"><label>Base Code</label><input type="text" id="newVarCode" placeholder="LS280"></div>
             <div style="flex:1;"><label>Size</label><input type="text" id="newVarSize" placeholder="38"></div>
@@ -2539,6 +2563,29 @@
     const { error } = await sb.from('materials').insert({ category:'materials', name, unit });
     if(error){ alert('Could not add: ' + error.message); return; }
     await renderAdmin();
+  }
+
+  async function addNewSkuAllSizes(){
+    const code = document.getElementById('newSkuBaseCode').value.trim().toUpperCase();
+    if(!code){ alert('Enter a base code'); return; }
+    const checkedSizes = Array.from(document.querySelectorAll('.new-sku-size:checked')).map(cb => cb.value);
+    if(checkedSizes.length === 0){ alert('Select at least one size'); return; }
+    const exists = refData.materials.some(m => m.category === 'stock' && m.base_item_code === code);
+    if(exists){ alert(code + ' already exists — use it directly, no need to re-add.'); return; }
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      const rows = checkedSizes.map(s => ({ category:'stock', sku: code+'-'+s, base_item_code: code, name: code+'-'+s }));
+      const { error } = await sb.from('materials').insert(rows);
+      if(error){ alert('Could not create SKU: ' + error.message); return; }
+      document.getElementById('newSkuBaseCode').value = '';
+      alert('Created ' + code + ' with ' + checkedSizes.length + ' size(s).');
+      await renderAdmin();
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+    }
   }
 
   async function addStockVariant(){
