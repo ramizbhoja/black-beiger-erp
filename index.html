@@ -1466,14 +1466,27 @@
       pendingExcelTally = null;
       return;
     }
+
+    // One batched query for "already scanned" totals, not one per delivery.
+    const ids = options.map(g => g.id);
+    const { data: existingLines } = await sb.from('grn_counted_lines').select('grn_id, counted_quantity').in('grn_id', ids);
+    const scannedByGrn = {};
+    (existingLines||[]).forEach(l => { scannedByGrn[l.grn_id] = (scannedByGrn[l.grn_id]||0) + Number(l.counted_quantity); });
+
     const body = `
       <p class="section-note">Pick one or more — one file can cover several slips, even across vendors.</p>
-      ${options.map(g => `
+      ${options.map(g => {
+        const refDate = g.status === 'posted' ? g.posted_at : (g.entry_date || g.created_at);
+        const already = scannedByGrn[g.id] || 0;
+        return `
         <label style="display:flex; align-items:flex-start; gap:8px; border:1px solid var(--bb-line); border-radius:9px; padding:10px 12px; margin-bottom:8px; text-transform:none; font-size:12.5px; cursor:pointer;">
           <input type="checkbox" class="excel-delivery-pick" value="${g.id}" style="width:auto; margin-bottom:0; margin-top:2px;">
-          <span><b>${vendorName(g.vendor_id)}</b> · ${g.receiving_book_ref||'no bill no'}${g.status==='posted'?' (recount)':' (early)'}</span>
+          <span>
+            <b>${vendorName(g.vendor_id)}</b> · ${g.receiving_book_ref||'no bill no'} · ${fmtDate(refDate)} · qty ${g.total_quantity_reported||'—'}
+            ${already > 0 ? `<br><span style="color:var(--bb-brass); font-weight:700;">Already scanned: ${already}</span>` : ''}
+          </span>
         </label>
-      `).join('')}
+      `;}).join('')}
     `;
     showConfirmModal('Select Delivery/Deliveries', body, confirmExcelDeliveryMultiPick, 'Continue');
   }
