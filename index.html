@@ -1391,7 +1391,6 @@
   function removeLocalCountedLine(idx){ localCountedLines.splice(idx,1); renderAddDetailsForm(); }
 
   let pendingExcelTally = null;
-  let pendingExcelMatch = null;
 
   async function handleExcelUpload(input){
     const file = input.files[0];
@@ -1419,7 +1418,7 @@
 
       pendingExcelTally = skuTally;
       input.value = '';
-      await showExcelVendorPicker();
+      await showExcelDeliveryMultiPicker();
     } catch(err) {
       alert('Could not read this file: ' + err.message + '. Check it\'s a genuine Excel/CSV file and try again.');
       input.value = '';
@@ -1427,31 +1426,6 @@
     }
   }
 
-  // Step 2: after the file is read, ask which delivery it belongs to —
-  // decided after upload, not locked in by whatever happened to be
-  // selected on the page beforehand.
-  async function showExcelVendorPicker(){
-    const [{ data: intakeData }, { data: recountData }, { data: earlyData }] = await Promise.all([
-      sb.from('grn').select('*').eq('status','intake').eq('grn_type','stock').order('created_at', { ascending:false }),
-      sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
-      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').order('created_at', { ascending:false }),
-    ]);
-    const options = [...(intakeData||[]), ...(recountData||[]), ...(earlyData||[])];
-    if(options.length === 0){
-      alert('No stock deliveries available to attach this file to.');
-      pendingExcelTally = null;
-      return;
-    }
-    const body = `
-      <label>Which delivery does this belong to?</label>
-      <select id="excelVendorPick">${options.map(g => `<option value="${g.id}">${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}</option>`).join('')}</select>
-    `;
-    showConfirmModal('Select Delivery', body, confirmExcelVendorPick, 'Continue');
-  }
-
-  // Step 3: match the tallied SKUs against that specific delivery's known
-  // codes (its own breakdown if it has one yet, otherwise the full known
-  // catalog), then show the exact SKU+size summary before anything is added.
   // Simple edit-distance check — used only to suggest an obvious one-digit
   // fix, never to apply anything automatically.
   function levenshteinDistance(a, b){
@@ -1475,203 +1449,273 @@
     return (best && bestDist === 1 && best !== code) ? best : null;
   }
 
-  let currentExcelValidCodes = [];
+  // Step 1: after the file is read, ask which delivery/deliveries it
+  // belongs to — one Excel file can cover several slips, even from
+  // different vendors, so this is a genuine multi-select.
+  let pendingExcelDeliveries = [];
+  let pendingExcelAutoAssign = {};
 
-  // Compact, code-level comparison — Excel total vs. Book total per code,
-  // not per individual SKU-size. 5 correct codes collapse to 5 short rows
-  // instead of burying the 1 real problem under 35 correct size-rows.
-  let pendingExcelParsed = [];
-  let pendingExcelCodeRelabels = {};
+  async function showExcelDeliveryMultiPicker(){
+    const [{ data: recountData }, { data: earlyData }] = await Promise.all([
+      sb.from('grn').select('*').eq('status','posted').eq('grn_type','stock').eq('recount_status','pending').order('posted_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').order('created_at', { ascending:false }),
+    ]);
+    const options = [...(recountData||[]), ...(earlyData||[])];
+    if(options.length === 0){
+      alert('No stock deliveries available to attach this file to.');
+      pendingExcelTally = null;
+      return;
+    }
+    const body = `
+      <p class="section-note">Pick one or more — one file can cover several slips, even across vendors.</p>
+      ${options.map(g => `
+        <label style="display:flex; align-items:flex-start; gap:8px; border:1px solid var(--bb-line); border-radius:9px; padding:10px 12px; margin-bottom:8px; text-transform:none; font-size:12.5px; cursor:pointer;">
+          <input type="checkbox" class="excel-delivery-pick" value="${g.id}" style="width:auto; margin-bottom:0; margin-top:2px;">
+          <span><b>${vendorName(g.vendor_id)}</b> · ${g.receiving_book_ref||'no bill no'}${g.status==='posted'?' (recount)':' (early)'}</span>
+        </label>
+      `).join('')}
+    `;
+    showConfirmModal('Select Delivery/Deliveries', body, confirmExcelDeliveryMultiPick, 'Continue');
+  }
 
-  async function confirmExcelVendorPick(){
-    const grnId = document.getElementById('excelVendorPick').value;
-    const { data: grn, error } = await sb.from('grn').select('*').eq('id', grnId).single();
-    if(error){ alert('Could not load that delivery: ' + error.message); pendingExcelTally = null; return; }
+  // Step 2: match every scanned code against the SELECTED deliveries' own
+  // breakdowns — a code appearing in exactly one is auto-assigned there.
+  // A code in none, or in more than one, needs a human pick — bypassable,
+  // never silently guessed.
+  async function confirmExcelDeliveryMultiPick(){
+    const checkedIds = Array.from(document.querySelectorAll('.excel-delivery-pick:checked')).map(cb => cb.value);
+    if(checkedIds.length === 0){ alert('Select at least one delivery'); return; }
 
-    const { data: recvLines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grnId);
-    const bookByCode = {};
-    (recvLines||[]).forEach(l => { bookByCode[l.base_item_code] = (bookByCode[l.base_item_code]||0) + Number(l.quantity); });
-    const validCodes = Object.keys(bookByCode).length
-      ? Object.keys(bookByCode)
-      : Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)));
-    currentExcelValidCodes = validCodes;
-    pendingExcelCodeRelabels = {};
+    const { data: grns, error } = await sb.from('grn').select('*').in('id', checkedIds);
+    if(error){ alert('Could not load deliveries: ' + error.message); return; }
+    pendingExcelDeliveries = grns || [];
 
-    // Normalize every entry's code for display (add the LS prefix even if
-    // the file omitted it) without yet deciding whether it's valid.
+    const { data: allLines } = await sb.from('grn_receiving_lines').select('grn_id, base_item_code').in('grn_id', checkedIds);
+    const codeToDeliveries = {};
+    (allLines||[]).forEach(l => {
+      (codeToDeliveries[l.base_item_code] = codeToDeliveries[l.base_item_code] || new Set()).add(l.grn_id);
+    });
+
+    const globalValidCodes = Array.from(new Set(refData.materials.filter(m => m.category === 'stock').map(m => m.base_item_code)));
+
     const parsed = [];
     Object.entries(pendingExcelTally).forEach(([sku, qty]) => {
       const m = sku.match(/^(.+)-(\d+)$/);
       let code = m[1], size = m[2];
       if(!code.startsWith('LS') && /^\d+$/.test(code)) code = 'LS'+code;
-      parsed.push({ code, size, qty });
+      parsed.push({ code, size, qty, rawSku: sku });
     });
     pendingExcelParsed = parsed;
 
-    const excelByCode = {};
-    parsed.forEach(e => { excelByCode[e.code] = (excelByCode[e.code]||0) + e.qty; });
+    const byCode = {};
+    parsed.forEach(e => { (byCode[e.code] = byCode[e.code] || []).push(e); });
 
-    const allCodes = Array.from(new Set([...Object.keys(excelByCode), ...Object.keys(bookByCode)]));
-    const rows = allCodes.map(code => {
-      const excelQty = excelByCode[code] || 0;
-      const bookQty = bookByCode[code] || 0;
-      const isKnown = validCodes.includes(code);
-      return { code, excelQty, bookQty, isKnown, ok: isKnown && excelQty === bookQty };
-    }).sort((a,b) => (a.ok === b.ok) ? 0 : (a.ok ? 1 : -1)); // problems first
+    pendingExcelAutoAssign = {};
+    const needsAssignment = [];
+    const unknownCodes = [];
 
-    // Swap detection: a code Excel has that Book doesn't, paired with a
-    // code Book expects that Excel never scanned, at the exact same qty —
-    // almost certainly one mislabeled code repeated across every size.
-    const swaps = [];
-    rows.filter(r => !r.isKnown && r.excelQty > 0).forEach(bad => {
-      const target = rows.find(r => r.isKnown && r.excelQty === 0 && r.bookQty === bad.excelQty);
-      if(target) swaps.push({ from: bad.code, to: target.code, qty: bad.excelQty });
-    });
-    const usedInPair = new Set(swaps.flatMap(s => [s.from, s.to]));
-
-    const tableRows = rows.map(r => `
-      <tr>
-        <td>${r.code}</td>
-        <td>${r.excelQty || '—'}</td>
-        <td>${r.bookQty || '—'}</td>
-        <td class="variance ${r.ok ? 'zero' : 'nonzero'}">${r.ok ? '✓' : '⚠'}</td>
-      </tr>
-    `).join('');
-
-    const swapHtml = swaps.map(s => `
-      <div class="list-item" style="border-color:var(--bb-brass); background:#FBF6EE;">
-        <span style="font-size:12.5px;">${s.from} doesn't match anything on the Book, and ${s.to} is missing entirely — same qty (${s.qty}) on every size. Likely the same code, mislabeled.</span>
-        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="applyCodeSwap(this, '${s.from}', '${s.to}')">Count all ${s.from} scans as ${s.to}</button>
-      </div>
-    `).join('');
-
-    // When quantities don't align exactly, still pair a near-match
-    // suggestion with the specific Book row it's likely meant to be —
-    // one card showing both sides, not two separate ones with no
-    // visible connection between them. Pre-filled as the likely fix,
-    // but honest about any leftover gap rather than hiding it.
-    const pairedHtml = [];
-    const stillUnpaired = [];
-    rows.filter(r => !r.ok && !usedInPair.has(r.code)).forEach(r => {
-      if(usedInPair.has(r.code)) return;
-      const suggestion = !r.isKnown ? findClosestCode(r.code, validCodes) : null;
-      const targetRow = suggestion ? rows.find(x => x.code === suggestion && !x.ok && !usedInPair.has(x.code)) : null;
-      if(targetRow){
-        usedInPair.add(r.code); usedInPair.add(targetRow.code);
-        pendingExcelCodeRelabels[r.code] = targetRow.code;
-        const gap = targetRow.bookQty - r.excelQty;
-        pairedHtml.push(`
-          <div class="list-item" style="border-color:var(--bb-brass); background:#FBF6EE;">
-            <div style="font-size:12.5px; margin-bottom:6px;">
-              <b>${r.code}</b> — Excel ${r.excelQty}, not on the Book<br>
-              <b>${targetRow.code}</b> — Book ${targetRow.bookQty}, nothing scanned yet
-            </div>
-            <p style="font-size:11.5px; color:var(--bb-ink-muted); margin:4px 0 6px;">These are probably the same code — count ${r.code} scans as:</p>
-            <input type="text" class="code-fix" data-orig="${r.code}" value="${targetRow.code}"
-              oninput="validateCodeFix(this)" style="margin-bottom:0; text-transform:uppercase; border-color:var(--bb-sage); background:#F0F7F1;">
-            ${gap !== 0 ? `<p style="font-size:11px; color:var(--bb-rust); margin:6px 0 0;">Even counted this way, that's still ${Math.abs(gap)} ${gap>0?'short of':'over'} the Book's ${targetRow.bookQty} — will still show as a real variance later, not hidden.</p>` : ''}
-          </div>
-        `);
-      } else {
-        stillUnpaired.push(r);
-      }
+    Object.keys(byCode).forEach(code => {
+      if(!globalValidCodes.includes(code)){ unknownCodes.push(code); return; }
+      const matches = codeToDeliveries[code] ? Array.from(codeToDeliveries[code]) : [];
+      if(matches.length === 1){ pendingExcelAutoAssign[code] = matches[0]; }
+      else { needsAssignment.push({ code, matches }); }
     });
 
-    // Anything left with no clear pairing at all — plain correction field,
-    // no pre-fill, no guessing.
-    const manualRows = stillUnpaired.map(r => `
-      <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">
-        <div class="top"><span>${r.code}</span><span class="mono">Excel ${r.excelQty || 0} / Book ${r.bookQty || 0}</span></div>
-        <div style="display:flex; gap:6px; align-items:center; margin-top:6px;">
-          <input type="text" class="code-fix" data-orig="${r.code}" value="${r.code}"
-            oninput="validateCodeFix(this)" style="flex:1; margin-bottom:0; text-transform:uppercase;">
-          <span class="fix-status" id="code-fix-status-${r.code}" style="font-size:16px; width:22px; text-align:center;"></span>
+    const byDelivery = {};
+    Object.entries(pendingExcelAutoAssign).forEach(([code, grnId]) => {
+      const totalQty = byCode[code].reduce((s,e)=>s+e.qty, 0);
+      (byDelivery[grnId] = byDelivery[grnId] || []).push({ code, qty: totalQty });
+    });
+    const deliverySummaryHtml = pendingExcelDeliveries.map(g => {
+      const codes = byDelivery[g.id] || [];
+      if(codes.length === 0) return '';
+      const total = codes.reduce((s,c)=>s+c.qty, 0);
+      return `
+        <div class="list-item" style="cursor:default;">
+          <div class="top"><b>${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}</b><span class="mono">${total}</span></div>
+          <div class="meta">${codes.map(c=>c.code+': '+c.qty).join(', ')}</div>
         </div>
-        <p style="font-size:11px; color:var(--bb-ink-muted); margin:6px 0 0;">Leave as-is and confirm if you're not sure — it'll be saved as unresolved for the approver to check against the photo.</p>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
-    pendingExcelMatch = { grnId };
-    showConfirmModal('Confirm Summary — ' + vendorName(grn.vendor_id), `
-      <table><tr><th>Code</th><th>Excel</th><th>Book</th><th></th></tr>${tableRows}</table>
-      ${swapHtml}
-      ${pairedHtml.join('')}
-      ${manualRows}
-    `, finalizeExcelImport);
+    const assignHtml = needsAssignment.map(({code, matches}) => {
+      const totalQty = byCode[code].reduce((s,e)=>s+e.qty, 0);
+      const label = matches.length === 0 ? "doesn't match any selected delivery's breakdown" : "matches more than one selected delivery — pick which one";
+      return `
+        <div class="list-item" style="border-color:var(--bb-brass); background:#FBF6EE;">
+          <div class="top"><span>${code}</span><span class="mono">${totalQty}</span></div>
+          <p class="section-note" style="margin:4px 0 6px;">${label}</p>
+          <select class="excel-assign-pick" data-code="${code}">
+            <option value="">Skip (save as unresolved)</option>
+            ${pendingExcelDeliveries.map(g => `<option value="${g.id}" ${matches.includes(g.id)?'selected':''}>${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}</option>`).join('')}
+          </select>
+        </div>
+      `;
+    }).join('');
+
+    const unknownHtml = unknownCodes.map(code => {
+      const totalQty = byCode[code].reduce((s,e)=>s+e.qty, 0);
+      const suggestion = findClosestCode(code, globalValidCodes);
+      return `
+        <div class="list-item" style="border-color:var(--bb-rust); background:#FCF5F2;">
+          <div class="top"><span>Read as: ${code}</span><span class="mono">${totalQty}</span></div>
+          <label style="margin-top:6px;">Correct code</label>
+          <input type="text" class="excel-code-fix" data-orig="${code}" value="${code}" style="text-transform:uppercase;">
+          ${suggestion ? `<p style="font-size:11px; color:var(--bb-ink-muted); margin:2px 0 6px;">Close to ${suggestion}?</p>` : ''}
+          <label>Which delivery?</label>
+          <select class="excel-code-fix-delivery" data-orig="${code}">
+            <option value="">Skip (save as unresolved)</option>
+            ${pendingExcelDeliveries.map(g => `<option value="${g.id}">${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}</option>`).join('')}
+          </select>
+        </div>
+      `;
+    }).join('');
+
+    showConfirmModal('Confirm Summary', `
+      ${deliverySummaryHtml || '<div class="empty">Nothing auto-matched yet — check below.</div>'}
+      ${assignHtml}
+      ${unknownHtml}
+    `, finalizeExcelMultiImport);
   }
 
-  function applyCodeSwap(btn, fromCode, toCode){
-    pendingExcelCodeRelabels[fromCode] = toCode;
-    // Re-render the modal body's table row for immediate feedback without
-    // rebuilding the whole comparison from scratch.
-    document.querySelectorAll('#modalBody tr').forEach(tr => {
-      const codeCell = tr.querySelector('td');
-      if(codeCell && codeCell.textContent === fromCode){
-        tr.querySelector('.variance').textContent = '✓';
-        tr.querySelector('.variance').className = 'variance zero';
-      }
+  // Step 3: apply every final assignment (auto + whatever was picked
+  // manually), grouped per delivery. Anything left as "Skip" is saved as
+  // unresolved, not dropped.
+  async function finalizeExcelMultiImport(){
+    const codeAssignment = { ...pendingExcelAutoAssign };
+    document.querySelectorAll('.excel-assign-pick').forEach(sel => {
+      codeAssignment[sel.dataset.code] = sel.value || null;
     });
-    btn.disabled = true;
-    btn.textContent = 'Applied';
-  }
 
-  function validateCodeFix(input){
-    const code = input.value.trim().toUpperCase();
-    const orig = input.dataset.orig;
-    const statusEl = document.getElementById('code-fix-status-' + orig);
-    const isValid = currentExcelValidCodes.includes(code);
-    input.style.borderColor = isValid ? 'var(--bb-sage)' : 'var(--bb-rust)';
-    input.style.background = isValid ? '#F0F7F1' : '#fff';
-    if(statusEl){ statusEl.textContent = isValid ? '✓' : ''; statusEl.style.color = 'var(--bb-sage)'; }
-    if(isValid && code !== orig) pendingExcelCodeRelabels[orig] = code;
-    else delete pendingExcelCodeRelabels[orig];
-  }
+    const globalValidCodes = refData.materials.filter(m=>m.category==='stock').map(m=>m.base_item_code);
+    const unknownFinal = {};
+    document.querySelectorAll('.excel-code-fix').forEach(input => {
+      const orig = input.dataset.orig;
+      const corrected = input.value.trim().toUpperCase();
+      const deliverySelect = document.querySelector('.excel-code-fix-delivery[data-orig="'+orig+'"]');
+      const grnId = deliverySelect ? deliverySelect.value : '';
+      unknownFinal[orig] = { corrected, grnId: grnId || null };
+    });
 
-  // Step 4: apply any relabels to the parsed entries, then add only the
-  // ones that end up as a genuinely known code — anything still wrong is
-  // simply left out, exactly as chosen.
-  async function finalizeExcelImport(){
-    if(!pendingExcelMatch) return;
-    const { grnId } = pendingExcelMatch;
-    try{
-      selectedDetailGrn = grnId;
-      localCountedLines = [];
-      let added = 0;
-      const errors = [];
-      const unresolvedRows = [];
-      for(const { code, size, qty } of pendingExcelParsed){
-        const finalCode = pendingExcelCodeRelabels[code] || code;
-        const rawSku = code+'-'+size; // exactly as scanned, before any Book-linking
-        if(!currentExcelValidCodes.includes(finalCode)){
-          unresolvedRows.push({ grn_id: grnId, raw_sku: rawSku, raw_code: code, size, quantity: qty, entered_by: me.id });
-          continue;
+    const perDeliveryLines = {};
+    const unresolvedRows = [];
+    const fallbackGrnId = pendingExcelDeliveries[0] ? pendingExcelDeliveries[0].id : null;
+
+    pendingExcelParsed.forEach(({code, size, qty, rawSku}) => {
+      if(code in unknownFinal){
+        const { corrected, grnId } = unknownFinal[code];
+        if(!grnId || !globalValidCodes.includes(corrected)){
+          if(fallbackGrnId) unresolvedRows.push({ grn_id: fallbackGrnId, raw_sku: rawSku, raw_code: code, size, quantity: qty, entered_by: me.id });
+          return;
         }
-        try{
-          const variantId = await getOrCreateVariant(finalCode, size);
-          localCountedLines.push({ material_id: variantId, qty, method:'excel_upload', label: finalCode+'-'+size, rawSku });
-          added++;
-        }catch(err){ errors.push(finalCode+'-'+size+' ('+err.message+')'); }
+        (perDeliveryLines[grnId] = perDeliveryLines[grnId] || []).push({ code: corrected, size, qty, rawSku });
+        return;
+      }
+      const grnId = codeAssignment[code];
+      if(!grnId){
+        if(fallbackGrnId) unresolvedRows.push({ grn_id: fallbackGrnId, raw_sku: rawSku, raw_code: code, size, quantity: qty, entered_by: me.id });
+        return;
+      }
+      (perDeliveryLines[grnId] = perDeliveryLines[grnId] || []).push({ code, size, qty, rawSku });
+    });
+
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      let totalAdded = 0;
+      const errors = [];
+      for(const [grnId, lines] of Object.entries(perDeliveryLines)){
+        for(const { code, size, qty, rawSku } of lines){
+          try{
+            const variantId = await getOrCreateVariant(code, size);
+            const { error } = await sb.from('grn_counted_lines').insert({
+              grn_id: grnId, material_id: variantId, counted_quantity: qty, entry_method: 'excel_upload', entered_by: me.id, raw_sku: rawSku
+            });
+            if(error){ errors.push(code+'-'+size+': '+error.message); continue; }
+            totalAdded++;
+          }catch(err){ errors.push(code+'-'+size+': '+err.message); }
+        }
       }
       if(unresolvedRows.length){
         const { error: eUnres } = await sb.from('grn_unresolved_lines').insert(unresolvedRows);
         if(eUnres) errors.push('Could not save unresolved rows: ' + eUnres.message);
       }
-      let msg = 'Added ' + added + ' line(s) from the file.';
-      if(unresolvedRows.length) msg += ' ' + unresolvedRows.length + ' line(s) saved as unresolved for the approver to check — not lost, not counted yet.';
-      if(errors.length) msg += ' Errors: ' + errors.join(', ') + '.';
-      if(unresolvedRows.length || errors.length) alert(msg);
+
+      let msg = 'Added ' + totalAdded + ' line(s) across ' + Object.keys(perDeliveryLines).length + ' delivery/deliveries.';
+      if(unresolvedRows.length) msg += ' ' + unresolvedRows.length + ' line(s) saved as unresolved.';
+      if(errors.length) msg += ' Errors: ' + errors.join('; ') + '.';
+      alert(msg);
+
+      const involvedGrnIds = Object.keys(perDeliveryLines);
+      if(involvedGrnIds.length){
+        await askMoreOrDoneForDeliveries(involvedGrnIds);
+      } else {
+        await renderBoy();
+      }
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+      pendingExcelTally = null;
+      pendingExcelParsed = [];
+      pendingExcelDeliveries = [];
+      pendingExcelAutoAssign = {};
+    }
+  }
+
+  // Step 4: per involved delivery, is there more still to scan, or is
+  // this everything? "Done" locks it in and moves it to reconciliation;
+  // "More coming" leaves it exactly where it was — still open, still
+  // pickable next time an Excel file gets uploaded.
+  let pendingMoreOrDoneGrnIds = [];
+
+  async function askMoreOrDoneForDeliveries(grnIds){
+    const { data: grns } = await sb.from('grn').select('*').in('id', grnIds);
+    pendingMoreOrDoneGrnIds = grnIds;
+    const body = `
+      <p class="section-note">For each delivery involved, is there more still to scan, or is this everything?</p>
+      ${(grns||[]).map(g => `
+        <div class="list-item" style="cursor:default;">
+          <div class="top"><b>${vendorName(g.vendor_id)} — ${g.receiving_book_ref||'no bill no'}</b></div>
+          <div style="display:flex; gap:14px; margin-top:6px;">
+            <label style="display:flex; align-items:center; gap:4px; text-transform:none; font-size:12.5px; margin-bottom:0;"><input type="radio" name="status-${g.id}" value="more" checked style="width:auto; margin-bottom:0;"> More coming</label>
+            <label style="display:flex; align-items:center; gap:4px; text-transform:none; font-size:12.5px; margin-bottom:0;"><input type="radio" name="status-${g.id}" value="done" style="width:auto; margin-bottom:0;"> Done, submit this</label>
+          </div>
+        </div>
+      `).join('')}
+    `;
+    showConfirmModal('Anything left to scan?', body, confirmMoreOrDone, 'Confirm');
+  }
+
+  async function confirmMoreOrDone(){
+    const toSubmit = [];
+    pendingMoreOrDoneGrnIds.forEach(gid => {
+      const checked = document.querySelector('input[name="status-'+gid+'"]:checked');
+      if(checked && checked.value === 'done') toSubmit.push(gid);
+    });
+    if(toSubmit.length === 0){ await renderBoy(); return; }
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      const errors = [];
+      for(const gid of toSubmit){
+        const { error } = await sb.rpc('submit_recount', { p_grn_id: gid, p_submitter_id: me.id });
+        if(error) errors.push(gid + ': ' + error.message);
+      }
+      if(errors.length) alert('Some deliveries could not be submitted: ' + errors.join('; '));
+      else alert(toSubmit.length + ' delivery/deliveries submitted for reconciliation.');
       await renderBoy();
     } catch(err) {
-      alert('Something went wrong adding these lines: ' + err.message);
+      alert('Something went wrong: ' + err.message);
     } finally {
-      pendingExcelTally = null;
-      pendingExcelMatch = null;
-      pendingExcelParsed = [];
-      pendingExcelCodeRelabels = {};
+      writeInFlight = false;
+      pendingMoreOrDoneGrnIds = [];
     }
   }
 
   async function submitForApproval(){
+    if(localCountedLines.length === 0){ alert('Add at least one line first'); return; }
+
     if(localCountedLines.length === 0){ alert('Add at least one line first'); return; }
     const { data: grnRow } = await sb.from('grn').select('vendor_id, receiving_book_ref').eq('id', selectedDetailGrn).single();
     const grandTotal = localCountedLines.reduce((s,l) => s + Number(l.qty), 0);
