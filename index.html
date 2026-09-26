@@ -2831,8 +2831,12 @@
     let rows = data || [];
 
     if(teamFilters.category){
-      const allowed = ACTION_CATEGORIES[teamFilters.category] || [];
-      rows = rows.filter(r => allowed.includes(r.action));
+      if(teamFilters.category.startsWith('cat:')){
+        const allowed = ACTION_CATEGORIES[teamFilters.category.slice(4)] || [];
+        rows = rows.filter(r => allowed.includes(r.action));
+      } else {
+        rows = rows.filter(r => r.action === teamFilters.category);
+      }
     }
 
     // Most GRN-lifecycle actions (approved, rejected, posted...) don't
@@ -2888,9 +2892,32 @@
           <div style="flex:1;"><label>Staff</label><select id="teamStaffFilter"><option value="">Any</option>${refData.users.map(u=>`<option value="${u.id}" ${teamFilters.staffId===u.id?'selected':''}>${u.full_name}</option>`).join('')}</select></div>
           <div style="flex:1;"><label>Action</label><select id="teamActionFilter">
             <option value="">Any</option>
-            <option value="entry" ${teamFilters.category==='entry'?'selected':''}>Entries</option>
-            <option value="approval" ${teamFilters.category==='approval'?'selected':''}>Approvals</option>
-            <option value="config" ${teamFilters.category==='config'?'selected':''}>Setup changes</option>
+            <optgroup label="Entries">
+              <option value="cat:entry" ${teamFilters.category==='cat:entry'?'selected':''}>All Entries</option>
+              <option value="grn_logged" ${teamFilters.category==='grn_logged'?'selected':''}>Logged Delivery</option>
+              <option value="breakdown_entered" ${teamFilters.category==='breakdown_entered'?'selected':''}>SKU Breakdown Entered</option>
+              <option value="breakdown_edited_before_approval" ${teamFilters.category==='breakdown_edited_before_approval'?'selected':''}>Breakdown Edited</option>
+              <option value="details_submitted" ${teamFilters.category==='details_submitted'?'selected':''}>Details Submitted</option>
+              <option value="recount_submitted" ${teamFilters.category==='recount_submitted'?'selected':''}>Physical Recount Submitted</option>
+            </optgroup>
+            <optgroup label="Approvals">
+              <option value="cat:approval" ${teamFilters.category==='cat:approval'?'selected':''}>All Approvals</option>
+              <option value="approved" ${teamFilters.category==='approved'?'selected':''}>Approved</option>
+              <option value="rejected" ${teamFilters.category==='rejected'?'selected':''}>Rejected</option>
+              <option value="posted_to_ledger" ${teamFilters.category==='posted_to_ledger'?'selected':''}>Posted to Ledger</option>
+              <option value="recount_reconciled" ${teamFilters.category==='recount_reconciled'?'selected':''}>Recount Reconciled</option>
+              <option value="breakdown_correction_requested" ${teamFilters.category==='breakdown_correction_requested'?'selected':''}>Breakdown Correction Flagged</option>
+            </optgroup>
+            <optgroup label="Setup Changes">
+              <option value="cat:config" ${teamFilters.category==='cat:config'?'selected':''}>All Setup Changes</option>
+              <option value="vendors_insert" ${teamFilters.category==='vendors_insert'?'selected':''}>Vendor Added</option>
+              <option value="vendors_update" ${teamFilters.category==='vendors_update'?'selected':''}>Vendor Updated</option>
+              <option value="materials_insert" ${teamFilters.category==='materials_insert'?'selected':''}>SKU/Material Added</option>
+              <option value="materials_update" ${teamFilters.category==='materials_update'?'selected':''}>SKU/Material Updated</option>
+              <option value="approval_matrix_insert" ${teamFilters.category==='approval_matrix_insert'?'selected':''}>Approval Rule Added</option>
+              <option value="approval_matrix_update" ${teamFilters.category==='approval_matrix_update'?'selected':''}>Approval Rule Updated</option>
+              <option value="payments_insert" ${teamFilters.category==='payments_insert'?'selected':''}>Payment Recorded</option>
+            </optgroup>
           </select></div>
         </div>
         <div style="display:flex; gap:8px; margin-top:8px;">
@@ -2902,12 +2929,14 @@
         <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="applyTeamFilters()">Filter</button>
         <h4 style="margin-top:14px;">${rows.length} action(s)</h4>
         <div id="teamActivityList">
-          ${rows.length===0 ? '<div class="empty">No activity found for this filter.</div>' : rows.map(row => `
-            <div class="list-item" style="cursor:default;">
+          ${rows.length===0 ? '<div class="empty">No activity found for this filter.</div>' : rows.map(row => {
+            const clickable = row.table_name === 'grn';
+            return `
+            <div class="list-item" style="${clickable ? 'cursor:pointer;' : 'cursor:default;'}" ${clickable ? `onclick="openLedgerEntryDetail('${row.record_id}')"` : ''}>
               <div class="top"><span>${summarizeAuditEntry(row)}</span></div>
               <div class="meta">${fmtDate(row.created_at)}</div>
             </div>
-          `).join('')}
+          `;}).join('')}
         </div>
       </div>
     `;
