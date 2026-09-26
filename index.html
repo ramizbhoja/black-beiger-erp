@@ -2766,7 +2766,13 @@
 
   // ---------- EXPORTS ----------
   // ---------- TEAM ACTIVITY ----------
-  let teamFilters = { fromDate:'', toDate:'' };
+  let teamFilters = { fromDate:'', toDate:'', staffId:'', category:'', vendorId:'', sku:'', search:'' };
+
+  const ACTION_CATEGORIES = {
+    entry: ['grn_logged','details_submitted','breakdown_entered','breakdown_edited_before_approval','recount_submitted'],
+    approval: ['approved','rejected','posted_to_ledger','recount_reconciled','breakdown_correction_requested'],
+    config: ['vendors_insert','vendors_update','materials_insert','materials_update','approval_matrix_insert','approval_matrix_update','payments_insert'],
+  };
 
   function summarizeAuditEntry(row){
     const who = row.actor_user_id ? userName(row.actor_user_id) : 'System';
@@ -2796,6 +2802,16 @@
         return `${who} changed an approval rule${after.active===false ? ' — deactivated' : ''}`;
       case 'payments_insert':
         return `${who} recorded a payment of ${after.amount} to ${vendorName(after.vendor_id)}`;
+      case 'breakdown_entered':
+        return `${who} entered the SKU breakdown (total ${after.total||'?'})`;
+      case 'breakdown_edited_before_approval':
+        return `${who} edited the SKU breakdown before approval (total ${after.total||'?'})`;
+      case 'recount_submitted':
+        return `${who} submitted a physical recount`;
+      case 'recount_reconciled':
+        return `${who} reconciled a recount${after.flags_raised ? ' — '+after.flags_raised+' variance flag(s)' : ' — clean'}`;
+      case 'breakdown_correction_requested':
+        return `${who} flagged ${after.wrong_code} as wrong — should be ${after.correct_code}`;
       default:
         return `${who} — ${row.action} on ${row.table_name}`;
     }
@@ -2805,12 +2821,60 @@
     const el = document.getElementById('panel-team');
     el.innerHTML = '<div class="card2"><div class="loading">Loading…</div></div>';
 
-    let query = sb.from('audit_log').select('*').not('actor_user_id', 'is', null).order('created_at', { ascending:false }).limit(200);
+    let query = sb.from('audit_log').select('*').not('actor_user_id', 'is', null).order('created_at', { ascending:false }).limit(500);
     if(teamFilters.fromDate) query = query.gte('created_at', teamFilters.fromDate + 'T00:00:00');
     if(teamFilters.toDate) query = query.lte('created_at', teamFilters.toDate + 'T23:59:59');
+    if(teamFilters.staffId) query = query.eq('actor_user_id', teamFilters.staffId);
 
     const { data, error } = await query;
     if(error){ el.innerHTML = `<div class="card2"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
+    let rows = data || [];
+
+    if(teamFilters.category){
+      const allowed = ACTION_CATEGORIES[teamFilters.category] || [];
+      rows = rows.filter(r => allowed.includes(r.action));
+    }
+
+    // Most GRN-lifecycle actions (approved, rejected, posted...) don't
+    // carry a SKU or vendor directly in their own log entry — the GRN
+    // itself does. So a SKU or vendor filter means: find which GRNs
+    // actually involve that SKU/vendor first, then keep only the log
+    // rows tied to those GRNs (plus direct matches on the materials/
+    // vendors tables themselves for setup-change entries).
+    if(teamFilters.vendorId || teamFilters.sku){
+      let grnQuery = sb.from('grn').select('id, vendor_id');
+      if(teamFilters.vendorId) grnQuery = grnQuery.eq('vendor_id', teamFilters.vendorId);
+      const { data: candidateGrns } = await grnQuery;
+      let matchingGrnIds = new Set((candidateGrns||[]).map(g => g.id));
+
+      if(teamFilters.sku){
+        const { data: recvMatches } = await sb.from('grn_receiving_lines').select('grn_id').eq('base_item_code', teamFilters.sku);
+        const matchingMaterialIds = refData.materials.filter(m => m.base_item_code === teamFilters.sku).map(m => m.id);
+        let countedGrnIds = [];
+        if(matchingMaterialIds.length){
+          const { data: countedMatches } = await sb.from('grn_counted_lines').select('grn_id').in('material_id', matchingMaterialIds);
+          countedGrnIds = (countedMatches||[]).map(l => l.grn_id);
+        }
+        const skuGrnIds = new Set([...(recvMatches||[]).map(l=>l.grn_id), ...countedGrnIds]);
+        matchingGrnIds = teamFilters.vendorId
+          ? new Set([...matchingGrnIds].filter(id => skuGrnIds.has(id)))
+          : skuGrnIds;
+      }
+
+      const matchingMaterialRowIds = teamFilters.sku ? refData.materials.filter(m => m.base_item_code === teamFilters.sku).map(m=>m.id) : [];
+
+      rows = rows.filter(r => {
+        if(r.table_name === 'grn') return matchingGrnIds.has(r.record_id);
+        if(r.table_name === 'materials' && teamFilters.sku) return matchingMaterialRowIds.includes(r.record_id);
+        if(r.table_name === 'vendors' && teamFilters.vendorId && !teamFilters.sku) return r.record_id === teamFilters.vendorId;
+        return false;
+      });
+    }
+
+    if(teamFilters.search){
+      const term = teamFilters.search.toLowerCase();
+      rows = rows.filter(r => summarizeAuditEntry(r).toLowerCase().includes(term));
+    }
 
     el.innerHTML = `
       <div class="card2">
@@ -2820,10 +2884,25 @@
           <div style="flex:1;"><label>From</label><input type="date" id="teamFrom" value="${teamFilters.fromDate}"></div>
           <div style="flex:1;"><label>To</label><input type="date" id="teamTo" value="${teamFilters.toDate}"></div>
         </div>
-        <button class="btn btn-secondary btn-sm" onclick="applyTeamFilters()">Filter</button>
-        <h4 style="margin-top:14px;">${(data||[]).length} action(s)</h4>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <div style="flex:1;"><label>Staff</label><select id="teamStaffFilter"><option value="">Any</option>${refData.users.map(u=>`<option value="${u.id}" ${teamFilters.staffId===u.id?'selected':''}>${u.full_name}</option>`).join('')}</select></div>
+          <div style="flex:1;"><label>Action</label><select id="teamActionFilter">
+            <option value="">Any</option>
+            <option value="entry" ${teamFilters.category==='entry'?'selected':''}>Entries</option>
+            <option value="approval" ${teamFilters.category==='approval'?'selected':''}>Approvals</option>
+            <option value="config" ${teamFilters.category==='config'?'selected':''}>Setup changes</option>
+          </select></div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <div style="flex:1;"><label>Vendor</label><select id="teamVendorFilter"><option value="">Any</option>${refData.vendors.map(v=>`<option value="${v.id}" ${teamFilters.vendorId===v.id?'selected':''}>${v.name}</option>`).join('')}</select></div>
+          <div style="flex:1;"><label>SKU</label><input type="text" id="teamSkuFilter" placeholder="e.g. LS1208" value="${teamFilters.sku}" style="text-transform:uppercase;"></div>
+        </div>
+        <label style="margin-top:8px;">Search</label>
+        <input type="text" id="teamSearch" placeholder="Search activity…" value="${teamFilters.search}">
+        <button class="btn btn-secondary btn-sm" style="margin-top:6px;" onclick="applyTeamFilters()">Filter</button>
+        <h4 style="margin-top:14px;">${rows.length} action(s)</h4>
         <div id="teamActivityList">
-          ${(data||[]).length===0 ? '<div class="empty">No activity found for this range.</div>' : data.map(row => `
+          ${rows.length===0 ? '<div class="empty">No activity found for this filter.</div>' : rows.map(row => `
             <div class="list-item" style="cursor:default;">
               <div class="top"><span>${summarizeAuditEntry(row)}</span></div>
               <div class="meta">${fmtDate(row.created_at)}</div>
@@ -2837,6 +2916,11 @@
   function applyTeamFilters(){
     teamFilters.fromDate = document.getElementById('teamFrom').value;
     teamFilters.toDate = document.getElementById('teamTo').value;
+    teamFilters.staffId = document.getElementById('teamStaffFilter').value;
+    teamFilters.category = document.getElementById('teamActionFilter').value;
+    teamFilters.vendorId = document.getElementById('teamVendorFilter').value;
+    teamFilters.sku = document.getElementById('teamSkuFilter').value.trim().toUpperCase();
+    teamFilters.search = document.getElementById('teamSearch').value.trim().toLowerCase();
     renderTeamActivity();
   }
 
