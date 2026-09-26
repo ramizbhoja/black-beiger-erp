@@ -2766,7 +2766,7 @@
 
   // ---------- EXPORTS ----------
   // ---------- TEAM ACTIVITY ----------
-  let teamFilters = { fromDate:'', toDate:'', staffId:'', category:'', vendorId:'', sku:'', search:'' };
+  let teamFilters = { fromDate:'', toDate:'', staffIds:[], categories:[], vendorIds:[], sku:'', search:'' };
 
   const ACTION_CATEGORIES = {
     entry: ['grn_logged','details_submitted','breakdown_entered','breakdown_edited_before_approval','recount_submitted'],
@@ -2824,19 +2824,21 @@
     let query = sb.from('audit_log').select('*').not('actor_user_id', 'is', null).order('created_at', { ascending:false }).limit(500);
     if(teamFilters.fromDate) query = query.gte('created_at', teamFilters.fromDate + 'T00:00:00');
     if(teamFilters.toDate) query = query.lte('created_at', teamFilters.toDate + 'T23:59:59');
-    if(teamFilters.staffId) query = query.eq('actor_user_id', teamFilters.staffId);
+    if(teamFilters.staffIds.length) query = query.in('actor_user_id', teamFilters.staffIds);
 
     const { data, error } = await query;
     if(error){ el.innerHTML = `<div class="card2"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
     let rows = data || [];
 
-    if(teamFilters.category){
-      if(teamFilters.category.startsWith('cat:')){
-        const allowed = ACTION_CATEGORIES[teamFilters.category.slice(4)] || [];
-        rows = rows.filter(r => allowed.includes(r.action));
-      } else {
-        rows = rows.filter(r => r.action === teamFilters.category);
-      }
+    if(teamFilters.categories.length){
+      // Expand any "cat:x" broad selections into their full action list,
+      // combined with whatever specific actions were also picked.
+      const allowed = new Set();
+      teamFilters.categories.forEach(c => {
+        if(c.startsWith('cat:')) (ACTION_CATEGORIES[c.slice(4)]||[]).forEach(a => allowed.add(a));
+        else allowed.add(c);
+      });
+      rows = rows.filter(r => allowed.has(r.action));
     }
 
     // Most GRN-lifecycle actions (approved, rejected, posted...) don't
@@ -2845,9 +2847,9 @@
     // actually involve that SKU/vendor first, then keep only the log
     // rows tied to those GRNs (plus direct matches on the materials/
     // vendors tables themselves for setup-change entries).
-    if(teamFilters.vendorId || teamFilters.sku){
+    if(teamFilters.vendorIds.length || teamFilters.sku){
       let grnQuery = sb.from('grn').select('id, vendor_id');
-      if(teamFilters.vendorId) grnQuery = grnQuery.eq('vendor_id', teamFilters.vendorId);
+      if(teamFilters.vendorIds.length) grnQuery = grnQuery.in('vendor_id', teamFilters.vendorIds);
       const { data: candidateGrns } = await grnQuery;
       let matchingGrnIds = new Set((candidateGrns||[]).map(g => g.id));
 
@@ -2860,7 +2862,7 @@
           countedGrnIds = (countedMatches||[]).map(l => l.grn_id);
         }
         const skuGrnIds = new Set([...(recvMatches||[]).map(l=>l.grn_id), ...countedGrnIds]);
-        matchingGrnIds = teamFilters.vendorId
+        matchingGrnIds = teamFilters.vendorIds.length
           ? new Set([...matchingGrnIds].filter(id => skuGrnIds.has(id)))
           : skuGrnIds;
       }
@@ -2870,7 +2872,7 @@
       rows = rows.filter(r => {
         if(r.table_name === 'grn') return matchingGrnIds.has(r.record_id);
         if(r.table_name === 'materials' && teamFilters.sku) return matchingMaterialRowIds.includes(r.record_id);
-        if(r.table_name === 'vendors' && teamFilters.vendorId && !teamFilters.sku) return r.record_id === teamFilters.vendorId;
+        if(r.table_name === 'vendors' && teamFilters.vendorIds.length && !teamFilters.sku) return teamFilters.vendorIds.includes(r.record_id);
         return false;
       });
     }
@@ -2889,39 +2891,38 @@
           <div style="flex:1;"><label>To</label><input type="date" id="teamTo" value="${teamFilters.toDate}"></div>
         </div>
         <div style="display:flex; gap:8px; margin-top:8px;">
-          <div style="flex:1;"><label>Staff</label><select id="teamStaffFilter"><option value="">Any</option>${refData.users.map(u=>`<option value="${u.id}" ${teamFilters.staffId===u.id?'selected':''}>${u.full_name}</option>`).join('')}</select></div>
-          <div style="flex:1;"><label>Action</label><select id="teamActionFilter">
-            <option value="">Any</option>
+          <div style="flex:1;"><label>Staff (tap to pick multiple)</label><select id="teamStaffFilter" multiple size="1">${refData.users.map(u=>`<option value="${u.id}" ${teamFilters.staffIds.includes(u.id)?'selected':''}>${u.full_name}</option>`).join('')}</select></div>
+          <div style="flex:1;"><label>Action (tap to pick multiple)</label><select id="teamActionFilter" multiple size="1">
             <optgroup label="Entries">
-              <option value="cat:entry" ${teamFilters.category==='cat:entry'?'selected':''}>All Entries</option>
-              <option value="grn_logged" ${teamFilters.category==='grn_logged'?'selected':''}>Logged Delivery</option>
-              <option value="breakdown_entered" ${teamFilters.category==='breakdown_entered'?'selected':''}>SKU Breakdown Entered</option>
-              <option value="breakdown_edited_before_approval" ${teamFilters.category==='breakdown_edited_before_approval'?'selected':''}>Breakdown Edited</option>
-              <option value="details_submitted" ${teamFilters.category==='details_submitted'?'selected':''}>Details Submitted</option>
-              <option value="recount_submitted" ${teamFilters.category==='recount_submitted'?'selected':''}>Physical Recount Submitted</option>
+              <option value="cat:entry" ${teamFilters.categories.includes('cat:entry')?'selected':''}>All Entries</option>
+              <option value="grn_logged" ${teamFilters.categories.includes('grn_logged')?'selected':''}>Logged Delivery</option>
+              <option value="breakdown_entered" ${teamFilters.categories.includes('breakdown_entered')?'selected':''}>SKU Breakdown Entered</option>
+              <option value="breakdown_edited_before_approval" ${teamFilters.categories.includes('breakdown_edited_before_approval')?'selected':''}>Breakdown Edited</option>
+              <option value="details_submitted" ${teamFilters.categories.includes('details_submitted')?'selected':''}>Details Submitted</option>
+              <option value="recount_submitted" ${teamFilters.categories.includes('recount_submitted')?'selected':''}>Physical Recount Submitted</option>
             </optgroup>
             <optgroup label="Approvals">
-              <option value="cat:approval" ${teamFilters.category==='cat:approval'?'selected':''}>All Approvals</option>
-              <option value="approved" ${teamFilters.category==='approved'?'selected':''}>Approved</option>
-              <option value="rejected" ${teamFilters.category==='rejected'?'selected':''}>Rejected</option>
-              <option value="posted_to_ledger" ${teamFilters.category==='posted_to_ledger'?'selected':''}>Posted to Ledger</option>
-              <option value="recount_reconciled" ${teamFilters.category==='recount_reconciled'?'selected':''}>Recount Reconciled</option>
-              <option value="breakdown_correction_requested" ${teamFilters.category==='breakdown_correction_requested'?'selected':''}>Breakdown Correction Flagged</option>
+              <option value="cat:approval" ${teamFilters.categories.includes('cat:approval')?'selected':''}>All Approvals</option>
+              <option value="approved" ${teamFilters.categories.includes('approved')?'selected':''}>Approved</option>
+              <option value="rejected" ${teamFilters.categories.includes('rejected')?'selected':''}>Rejected</option>
+              <option value="posted_to_ledger" ${teamFilters.categories.includes('posted_to_ledger')?'selected':''}>Posted to Ledger</option>
+              <option value="recount_reconciled" ${teamFilters.categories.includes('recount_reconciled')?'selected':''}>Recount Reconciled</option>
+              <option value="breakdown_correction_requested" ${teamFilters.categories.includes('breakdown_correction_requested')?'selected':''}>Breakdown Correction Flagged</option>
             </optgroup>
             <optgroup label="Setup Changes">
-              <option value="cat:config" ${teamFilters.category==='cat:config'?'selected':''}>All Setup Changes</option>
-              <option value="vendors_insert" ${teamFilters.category==='vendors_insert'?'selected':''}>Vendor Added</option>
-              <option value="vendors_update" ${teamFilters.category==='vendors_update'?'selected':''}>Vendor Updated</option>
-              <option value="materials_insert" ${teamFilters.category==='materials_insert'?'selected':''}>SKU/Material Added</option>
-              <option value="materials_update" ${teamFilters.category==='materials_update'?'selected':''}>SKU/Material Updated</option>
-              <option value="approval_matrix_insert" ${teamFilters.category==='approval_matrix_insert'?'selected':''}>Approval Rule Added</option>
-              <option value="approval_matrix_update" ${teamFilters.category==='approval_matrix_update'?'selected':''}>Approval Rule Updated</option>
-              <option value="payments_insert" ${teamFilters.category==='payments_insert'?'selected':''}>Payment Recorded</option>
+              <option value="cat:config" ${teamFilters.categories.includes('cat:config')?'selected':''}>All Setup Changes</option>
+              <option value="vendors_insert" ${teamFilters.categories.includes('vendors_insert')?'selected':''}>Vendor Added</option>
+              <option value="vendors_update" ${teamFilters.categories.includes('vendors_update')?'selected':''}>Vendor Updated</option>
+              <option value="materials_insert" ${teamFilters.categories.includes('materials_insert')?'selected':''}>SKU/Material Added</option>
+              <option value="materials_update" ${teamFilters.categories.includes('materials_update')?'selected':''}>SKU/Material Updated</option>
+              <option value="approval_matrix_insert" ${teamFilters.categories.includes('approval_matrix_insert')?'selected':''}>Approval Rule Added</option>
+              <option value="approval_matrix_update" ${teamFilters.categories.includes('approval_matrix_update')?'selected':''}>Approval Rule Updated</option>
+              <option value="payments_insert" ${teamFilters.categories.includes('payments_insert')?'selected':''}>Payment Recorded</option>
             </optgroup>
           </select></div>
         </div>
         <div style="display:flex; gap:8px; margin-top:8px;">
-          <div style="flex:1;"><label>Vendor</label><select id="teamVendorFilter"><option value="">Any</option>${refData.vendors.map(v=>`<option value="${v.id}" ${teamFilters.vendorId===v.id?'selected':''}>${v.name}</option>`).join('')}</select></div>
+          <div style="flex:1;"><label>Vendor (tap to pick multiple)</label><select id="teamVendorFilter" multiple size="1">${refData.vendors.map(v=>`<option value="${v.id}" ${teamFilters.vendorIds.includes(v.id)?'selected':''}>${v.name}</option>`).join('')}</select></div>
           <div style="flex:1;"><label>SKU</label><input type="text" id="teamSkuFilter" placeholder="e.g. LS1208" value="${teamFilters.sku}" style="text-transform:uppercase;"></div>
         </div>
         <label style="margin-top:8px;">Search</label>
@@ -2942,12 +2943,17 @@
     `;
   }
 
+  function selectedValues(id){
+    const el = document.getElementById(id);
+    return el ? Array.from(el.selectedOptions).map(o => o.value) : [];
+  }
+
   function applyTeamFilters(){
     teamFilters.fromDate = document.getElementById('teamFrom').value;
     teamFilters.toDate = document.getElementById('teamTo').value;
-    teamFilters.staffId = document.getElementById('teamStaffFilter').value;
-    teamFilters.category = document.getElementById('teamActionFilter').value;
-    teamFilters.vendorId = document.getElementById('teamVendorFilter').value;
+    teamFilters.staffIds = selectedValues('teamStaffFilter');
+    teamFilters.categories = selectedValues('teamActionFilter');
+    teamFilters.vendorIds = selectedValues('teamVendorFilter');
     teamFilters.sku = document.getElementById('teamSkuFilter').value.trim().toUpperCase();
     teamFilters.search = document.getElementById('teamSearch').value.trim().toLowerCase();
     renderTeamActivity();
