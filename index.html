@@ -1932,7 +1932,7 @@
         }
         return `<div class="list-item" style="cursor:pointer;" onclick="openApprovalDetail('${g.id}')">
           <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge ${g.grn_type}">${g.grn_type}</span></div>
-          <div class="meta">${g.receiving_book_ref||'no bill no'}${g.grn_type==='stock' && g.total_quantity_reported ? ' · total: '+g.total_quantity_reported : ''} . ${statusLabel}</div>
+          <div class="meta">${g.receiving_book_ref||'no bill no'} · ${fmtDate(g.entry_date || g.created_at)}${g.grn_type==='stock' && g.total_quantity_reported ? ' · total: '+g.total_quantity_reported : ''} . ${statusLabel}</div>
         </div>`;
       }))).join('');
     }
@@ -1941,7 +1941,7 @@
       document.getElementById('recountQueueList').innerHTML = recountQueue.map(g => `
         <div class="list-item" style="cursor:pointer;" onclick="openApprovalDetail('${g.id}')">
           <div class="top"><b>${vendorName(g.vendor_id)}</b><span class="badge stock">recount</span></div>
-          <div class="meta">${g.receiving_book_ref||'no bill no'} . physical count ready to reconcile</div>
+          <div class="meta">${g.receiving_book_ref||'no bill no'} · ${fmtDate(g.posted_at)} . physical count ready to reconcile</div>
         </div>
       `).join('');
     }
