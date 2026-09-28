@@ -534,11 +534,11 @@
     el.innerHTML = '<div class="loading">Loading…</div>';
 
     const [{ data: posted, error: e1 }, { count: pendingCount, error: e2 }, { data: flags, error: e3 }, { data: intake, error: e4 }, { data: recountPending, error: e5 }] = await Promise.all([
-      sb.from('grn').select('*').eq('status','posted').order('posted_at', { ascending:false }),
-      sb.from('grn').select('*', { count:'exact', head:true }).eq('status','submitted'),
+      sb.from('grn').select('*').eq('status','posted').is('voided_at', null).order('posted_at', { ascending:false }),
+      sb.from('grn').select('*', { count:'exact', head:true }).eq('status','submitted').is('voided_at', null),
       sb.from('variance_flags').select('grn_id, status'),
-      sb.from('grn').select('created_at').eq('status','intake'),
-      sb.from('grn').select('posted_at').eq('status','posted').eq('recount_status','pending'),
+      sb.from('grn').select('created_at').eq('status','intake').is('voided_at', null),
+      sb.from('grn').select('posted_at').eq('status','posted').eq('recount_status','pending').is('voided_at', null),
     ]);
     if(e1 || e2 || e3 || e4 || e5){ el.innerHTML = `<div class="card2"><div class="empty">Could not load dashboard: ${(e1||e2||e3||e4||e5).message}</div></div>`; return; }
 
@@ -684,7 +684,7 @@
   async function renderBulkFinalizeForm(){
     const area = document.getElementById('boyFormArea');
     area.innerHTML = '<div class="card2"><div class="loading">Loading…</div></div>';
-    const { data: pending, error } = await sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').eq('grn_type','stock').order('posted_at', { ascending:true });
+    const { data: pending, error } = await sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').eq('grn_type','stock').is('voided_at', null).order('posted_at', { ascending:true });
     if(error){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${error.message}</div></div>`; return; }
     if(!pending || pending.length === 0){ area.innerHTML = '<div class="card2 accent-bulk"><h3>BULK FINALIZE</h3><div class="empty">Nothing waiting on a physical recount.</div></div>'; return; }
 
@@ -1191,9 +1191,9 @@
 
   async function renderPendingList(){
     const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }, { data: earlyData, error: e3 }] = await Promise.all([
-      sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false }),
-      sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
-      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').order('created_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','intake').is('voided_at', null).order('created_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').is('voided_at', null).order('posted_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').is('voided_at', null).order('created_at', { ascending:false }),
     ]);
     const container = document.getElementById('pendingList');
     if(e1 || e2 || e3){ container.innerHTML = `<div class="empty">Could not load: ${(e1||e2||e3).message}</div>`; return; }
@@ -1268,9 +1268,9 @@
 
   async function renderAddDetailsForm(){
     const [{ data: intakeData, error: e1 }, { data: recountData, error: e2 }, { data: earlyData, error: e4 }] = await Promise.all([
-      sb.from('grn').select('*').eq('status','intake').order('created_at', { ascending:false }),
-      sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').order('posted_at', { ascending:false }),
-      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').order('created_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','intake').is('voided_at', null).order('created_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','posted').eq('recount_status','pending').is('voided_at', null).order('posted_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').is('voided_at', null).order('created_at', { ascending:false }),
     ]);
     const area = document.getElementById('boyFormArea');
     if(e1 || e2 || e4){ area.innerHTML = `<div class="card2"><div class="empty">Could not load: ${(e1||e2||e4).message}</div></div>`; return; }
@@ -1457,8 +1457,8 @@
 
   async function showExcelDeliveryMultiPicker(){
     const [{ data: recountData }, { data: earlyData }] = await Promise.all([
-      sb.from('grn').select('*').eq('status','posted').eq('grn_type','stock').eq('recount_status','pending').order('posted_at', { ascending:false }),
-      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').order('created_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','posted').eq('grn_type','stock').eq('recount_status','pending').is('voided_at', null).order('posted_at', { ascending:false }),
+      sb.from('grn').select('*').eq('status','submitted').eq('grn_type','stock').eq('recount_status','pending').is('voided_at', null).order('created_at', { ascending:false }),
     ]);
     const options = [...(recountData||[]), ...(earlyData||[])];
     if(options.length === 0){
@@ -1846,8 +1846,8 @@
     const el = document.getElementById('panel-approver');
     el.innerHTML = '<div class="loading">Loading...</div>';
     const [{ data: queue, error: e1 }, { data: recountQueue, error: e2 }, { data: correctionRequests, error: e3 }] = await Promise.all([
-      sb.from('grn').select('*').eq('status','submitted').order('submitted_at', { ascending:true }),
-      sb.from('grn').select('*').eq('status','posted').eq('recount_status','submitted').order('posted_at', { ascending:true }),
+      sb.from('grn').select('*').eq('status','submitted').is('voided_at', null).order('submitted_at', { ascending:true }),
+      sb.from('grn').select('*').eq('status','posted').eq('recount_status','submitted').is('voided_at', null).order('posted_at', { ascending:true }),
       sb.from('grn_breakdown_correction_requests').select('*').eq('status','pending').order('requested_at', { ascending:true }),
     ]);
     if(e1 || e2 || e3){ el.innerHTML = `<div class="card2"><div class="empty">Could not load queue: ${(e1||e2||e3).message}</div></div>`; return; }
@@ -2185,6 +2185,7 @@
           <button class="btn" style="background:transparent; border:1.5px solid var(--bb-rust); color:var(--bb-rust);" onclick="rejectGrnLive('${grnId}')">Reject</button>
           <button class="btn" style="background:var(--bb-sage); color:#fff;" ${sameUser?'disabled style="opacity:0.5;"':''} id="approveBtn" onclick="approveGrnLive('${grnId}')">${isFinal ? 'Approve and Post to Ledger' : 'Record Approval '+nextStep+' of '+required}</button>
         </div>
+        <button class="btn btn-secondary btn-block" style="margin-top:8px; color:var(--bb-rust); border-color:var(--bb-rust);" onclick="voidDelivery('${grnId}', 'approver')">Delete This Delivery</button>
       </div>
     `;
   }
@@ -2266,6 +2267,7 @@
         ${unresolvedHtml}
         ${varianceHtml}
         <button class="btn btn-primary btn-block" ${sameUser?'disabled style="opacity:0.5;"':''} id="reconcileBtn" onclick="reconcileRecountLive('${grnId}')" style="margin-top:12px;">Reconcile</button>
+        <button class="btn btn-secondary btn-block" style="margin-top:8px; color:var(--bb-rust); border-color:var(--bb-rust);" onclick="voidDelivery('${grnId}', 'approver')">Delete This Delivery</button>
       </div>
     `;
   }
@@ -2339,7 +2341,7 @@
     const resultsEl = document.getElementById('lookupResults');
     resultsEl.innerHTML = '<div class="loading">Searching…</div>';
 
-    let query = sb.from('grn').select('*').eq('status','posted').eq('grn_type','stock').order('posted_at', { ascending:false }).limit(25);
+    let query = sb.from('grn').select('*').eq('status','posted').eq('grn_type','stock').is('voided_at', null).order('posted_at', { ascending:false }).limit(25);
     if(vendorId) query = query.eq('vendor_id', vendorId);
     if(billNo) query = query.ilike('receiving_book_ref', '%'+billNo+'%');
 
@@ -2393,6 +2395,7 @@
         <div class="table-scroll"><table><tr><th>Code</th><th>Book</th><th>Recounted</th><th>Δ</th><th></th></tr>${tableRows}</table></div>
         <div id="adjustFormArea"></div>
         <div id="flagBreakdownFormArea"></div>
+        <button class="btn btn-secondary btn-block" style="margin-top:8px; color:var(--bb-rust); border-color:var(--bb-rust);" onclick="voidDelivery('${grnId}', 'lookup')">Delete This Delivery</button>
       </div>
     `;
   }
@@ -2470,6 +2473,29 @@
       const area = document.getElementById('flagBreakdownFormArea');
       if(area) area.innerHTML = '';
       await renderApprover();
+    } catch(err) {
+      alert('Something went wrong: ' + err.message);
+    } finally {
+      writeInFlight = false;
+    }
+  }
+
+  // ---------- VOID A DELIVERY (mistakenly logged, even if already approved/posted) ----------
+  async function voidDelivery(grnId, returnTo){
+    const reason = prompt('Reason for deleting this delivery (required — this is permanently logged):');
+    if(reason === null) return;
+    if(!reason.trim()){ alert('A reason is required'); return; }
+    if(writeInFlight) return;
+    writeInFlight = true;
+    try{
+      const { data, error } = await sb.rpc('void_grn', { p_grn_id: grnId, p_actor_id: me.id, p_reason: reason.trim() });
+      if(error){ alert('Could not delete: ' + error.message); return; }
+      alert(data.reversed_ledger_rows > 0
+        ? 'Deleted — this had already posted, so a reversal was recorded in the Ledger to cancel it out. Nothing was erased.'
+        : 'Deleted.');
+      if(returnTo === 'approver') await renderApprover();
+      else if(returnTo === 'lookup') document.getElementById('lookupResults').innerHTML = '';
+      else await renderBoy();
     } catch(err) {
       alert('Something went wrong: ' + err.message);
     } finally {
@@ -2770,7 +2796,7 @@
 
   const ACTION_CATEGORIES = {
     entry: ['grn_logged','details_submitted','breakdown_entered','breakdown_edited_before_approval','recount_submitted'],
-    approval: ['approved','rejected','posted_to_ledger','recount_reconciled','breakdown_correction_requested'],
+    approval: ['approved','rejected','posted_to_ledger','recount_reconciled','breakdown_correction_requested','voided'],
     config: ['vendors_insert','vendors_update','materials_insert','materials_update','approval_matrix_insert','approval_matrix_update','payments_insert'],
   };
 
@@ -2812,6 +2838,8 @@
         return `${who} reconciled a recount${after.flags_raised ? ' — '+after.flags_raised+' variance flag(s)' : ' — clean'}`;
       case 'breakdown_correction_requested':
         return `${who} flagged ${after.wrong_code} as wrong — should be ${after.correct_code}`;
+      case 'voided':
+        return `${who} deleted a delivery${after.reversed_ledger_rows ? ' (was posted — '+after.reversed_ledger_rows+' Ledger row(s) reversed)' : ''}: ${after.reason||''}`;
       default:
         return `${who} — ${row.action} on ${row.table_name}`;
     }
@@ -2908,6 +2936,7 @@
               <option value="posted_to_ledger" ${teamFilters.categories.includes('posted_to_ledger')?'selected':''}>Posted to Ledger</option>
               <option value="recount_reconciled" ${teamFilters.categories.includes('recount_reconciled')?'selected':''}>Recount Reconciled</option>
               <option value="breakdown_correction_requested" ${teamFilters.categories.includes('breakdown_correction_requested')?'selected':''}>Breakdown Correction Flagged</option>
+              <option value="voided" ${teamFilters.categories.includes('voided')?'selected':''}>Deleted</option>
             </optgroup>
             <optgroup label="Setup Changes">
               <option value="cat:config" ${teamFilters.categories.includes('cat:config')?'selected':''}>All Setup Changes</option>
