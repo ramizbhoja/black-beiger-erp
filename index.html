@@ -2017,6 +2017,7 @@
         <div class="modal-total" id="breakdownTotal" data-target="${grn.total_quantity_reported}" style="margin-top:8px;">Total: 0 / ${grn.total_quantity_reported}</div>
         <button class="btn btn-primary btn-block" id="saveBreakdownBtn" style="margin-top:10px;" onclick="${isEdit ? `saveEditedBreakdown('${grn.id}', ${grn.total_quantity_reported})` : `saveReceivingBreakdown('${grn.id}', ${grn.total_quantity_reported})`}">${isEdit ? 'Save Changes' : 'Save Breakdown'}</button>
         ${isEdit ? `<button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="openApprovalDetail('${grn.id}')">Cancel</button>` : ''}
+        <button class="btn btn-secondary btn-block" style="margin-top:8px; color:var(--bb-rust); border-color:var(--bb-rust);" onclick="voidDelivery('${grn.id}', 'approver')">Delete This Delivery</button>
       </div>
     `;
     if(existingLines && existingLines.length){
