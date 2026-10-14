@@ -2161,12 +2161,21 @@
 
     let breakdownHtml = '';
     let breakdownLines = [];
+    let totalsCheckHtml = '';
     if(grn.grn_type === 'stock'){
       const { data: lines } = await sb.from('grn_receiving_lines').select('base_item_code, quantity').eq('grn_id', grnId);
       breakdownLines = lines || [];
       const canEdit = (done||0) === 0;
       breakdownHtml = `<h4>SKU Breakdown (from photo)</h4><div class="table-scroll"><table><tr><th>Code</th><th>Qty</th></tr>${breakdownLines.map(l=>`<tr><td>${l.base_item_code}</td><td>${l.quantity}</td></tr>`).join('')}</table></div>
         ${canEdit ? `<button class="btn btn-secondary btn-sm" onclick="openEditBreakdown('${grnId}')">Edit Breakdown</button>` : ''}`;
+      if(grn.total_quantity_reported != null){
+        const breakdownSum = breakdownLines.reduce((s,l) => s + Number(l.quantity), 0);
+        const matches = breakdownSum === Number(grn.total_quantity_reported);
+        totalsCheckHtml = `<div class="modal-total" style="margin-top:10px; ${matches ? '' : 'border-color:var(--bb-rust); background:#FCF5F2;'}">
+          Boy's reported total: <b>${grn.total_quantity_reported}</b> &nbsp;·&nbsp; SKU breakdown total: <b>${breakdownSum}</b>
+          ${matches ? ' — matches' : ' — MISMATCH, check before posting'}
+        </div>`;
+      }
     } else {
       const { data: lines } = await sb.from('grn_counted_lines').select('material_id, counted_quantity').eq('grn_id', grnId);
       const totals = {};
@@ -2182,6 +2191,7 @@
         <div class="list-item" style="cursor:default;">Approval ${nextStep} of ${required}${isFinal ? ' - this click posts to the ledger' : ' - one more approval needed after this'}</div>
         ${photoHtml}
         ${breakdownHtml}
+        ${totalsCheckHtml}
         <div style="display:flex; gap:8px; margin-top:12px;">
           <button class="btn" style="background:transparent; border:1.5px solid var(--bb-rust); color:var(--bb-rust);" onclick="rejectGrnLive('${grnId}')">Reject</button>
           <button class="btn" style="background:var(--bb-sage); color:#fff;" ${sameUser?'disabled style="opacity:0.5;"':''} id="approveBtn" onclick="approveGrnLive('${grnId}')">${isFinal ? 'Approve and Post to Ledger' : 'Record Approval '+nextStep+' of '+required}</button>
